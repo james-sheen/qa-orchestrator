@@ -1,0 +1,71 @@
+# The acceptance scenario: the shipped stuck-at experiment, expressed as a file.
+#
+# The audit tool ships a recording of 28 walks in which one sensor was driven to a
+# new value before each of the first twelve and then left alone. The engine is
+# silent while it is driven and names it once it freezes. That experiment already
+# exists and its outcome is known, which is exactly what makes it the acceptance
+# test for this harness: if the orchestrator cannot express it, the DSL is wrong.
+#
+# It could not, at first. `drive` took one sensor and a phase may carry only one
+# action -- so there was no way to keep a control sensor moving beside the frozen
+# one, and no way to say the engine stays quiet while everything is moving. The
+# general `drive: {sensors: {...}}` form exists because this file needed it.
+#
+# What this reproduces and what it does not: freezing a reading through a mock is
+# an experiment, not a sensor failing on its own. It shows the engine reaches the
+# right verdict on a series with a known shape. It says nothing about how a real
+# sensor fails, which needs the qemu or testbed tier and, ultimately, hardware.
+
+format: qa-scenario/1
+name: stuck-at, against a control that keeps moving
+backend: mock
+mode: detect
+config: scenarios/fixtures/board.json
+
+machine:
+  # The mock serves the same thresholds the declaration carries. Without them the
+  # coverage diff reports every declared threshold as absent from the live sensor,
+  # which is a real finding about a different question and would drown this one.
+  sensors:
+    - {name: Inlet,  reading: 21.0, upper_critical: 80, upper_warning: 70}
+    - {name: Outlet, reading: 27.5, upper_critical: 80, upper_warning: 70}
+
+phases:
+  # Twelve walks with both sensors moving. The values wander around a steady mean
+  # rather than climbing: a run that trends upward makes STABILITY report the
+  # trend, and a strict alternation trips the period-2 oscillation term. The
+  # tool's own fixture carries the same warning, and the first draft of this file
+  # ignored it -- the values climbed 21 to 33.5 over twelve samples and the engine
+  # duly reported a bound breach in a phase that was supposed to be quiet.
+  - note: everything is moving, so the engine should have nothing to say
+    walks: 12
+    action:
+      drive:
+        sensors:
+          Inlet:  [21.0, 23.5, 22.0, 25.0, 21.5, 24.0, 22.5, 20.5, 23.0, 21.0, 24.5, 22.0]
+          Outlet: [27.5, 29.5, 28.0, 30.0, 27.0, 29.0, 28.5, 26.5, 29.5, 27.5, 30.5, 28.0]
+    expect:
+      audit: {exit: 0}
+      firmware: {Inlet: reading, Outlet: reading}
+
+  # Sixteen more walks, driving only Outlet. Inlet is not touched, so it holds
+  # its last value and freezes -- the failure this tool exists to find, since a
+  # frozen reading is in range precisely because it stopped being a measurement.
+  - note: Inlet freezes; Outlet keeps moving as the control
+    walks: 16
+    action:
+      drive:
+        sensors:
+          Outlet: [29.0, 27.0, 30.0, 28.5, 26.5, 29.5, 27.5, 30.5,
+                   28.0, 26.0, 29.0, 27.5, 30.0, 28.5, 26.5, 29.5]
+    expect:
+      # `names` and `not_names` are both here on purpose. Naming the frozen
+      # sensor is half the claim; the other half is that the control beside it
+      # was NOT named, which is what makes this evidence of detection rather
+      # than of a check that flags everything.
+      audit:
+        exit: 1
+        finding: "the reading has not changed across"
+        names: [Inlet]
+        not_names: [Outlet]
+      firmware: {Inlet: reading, Outlet: reading}

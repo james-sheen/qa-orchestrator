@@ -1,0 +1,49 @@
+# A firmware upgrade takes a sensor away, and then another is switched off.
+#
+# The coverage tier: `mode: coverage` needs no engine, so this runs anywhere the
+# audit tool is installed. It exercises the half of the tool's argument that
+# liveness does not -- presence is three-valued, and *gone* and *switched off* are
+# different hardware conditions with different responses.
+#
+# Each phase carries a `firmware` expectation as well as an `audit` one. That is
+# not redundancy. If the injection silently failed, the machine expectation is the
+# only thing that could tell us the tool was right not to report anything --
+# without it, a broken injector and a blind referee look identical from here.
+
+format: qa-scenario/1
+name: a sensor removed, then one disabled
+backend: mock
+mode: coverage
+config: scenarios/fixtures/board.json
+
+machine:
+  sensors:
+    - {name: Inlet,  reading: 21.0, upper_critical: 80, upper_warning: 70}
+    - {name: Outlet, reading: 27.5, upper_critical: 80, upper_warning: 70}
+
+phases:
+  - note: a healthy board, so the gate should be quiet
+    walks: 1
+    expect:
+      audit: {exit: 0}
+      firmware: {Inlet: reading, Outlet: reading}
+
+  - note: the firmware upgrade case -- the sensor is gone from the tree entirely
+    walks: 1
+    action: {remove: Outlet}
+    expect:
+      audit:
+        exit: 1
+        finding: "not reported by the machine at all"
+        names: [Outlet]
+        not_names: [Inlet]
+      firmware: {Outlet: absent, Inlet: reading}
+
+  - note: the factory-default case -- present, declared, and not reading
+    walks: 1
+    action: {disable: Inlet}
+    expect:
+      audit: {exit: 1}
+      # The state the tool exists for, and the one most BMC web UIs do not show
+      # at all: still in the tree, still declared, no longer a measurement.
+      firmware: {Inlet: disabled, Outlet: absent}

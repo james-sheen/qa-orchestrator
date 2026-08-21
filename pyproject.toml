@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qa-orchestrator"
+dynamic = ["version"]
+description = "Inject faults, drive walks, and check the audit tool reached the verdict it should have."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "James Sheen" }]
+keywords = ["openbmc", "redfish", "bmc", "qa", "fault-injection", "certification"]
+
+# PyYAML only. The scenario format is YAML and there is no standard-library
+# reader for it; everything else here is stdlib on purpose, because this has to
+# run on the same bring-up bench the audit tool holds itself to.
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+# The referee. Invoked as a subprocess, never imported for its verdicts -- see
+# referee.py. Declared as an extra rather than a hard dependency so `check`
+# (parse-only) works with nothing else installed.
+referee = ["bmc-sensor-audit[detect]>=0.1,<0.2"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+qa-orchestrator = "qa_orchestrator.cli:main"
+
+[tool.hatch.version]
+path = "src/qa_orchestrator/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qa_orchestrator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

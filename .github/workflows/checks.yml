@@ -1,0 +1,90 @@
+# The suite, and then both scenarios run for real.
+#
+# The unit tests cover the parser, the comparator and the architectural boundary
+# without a machine or a referee. That is most of the program, and none of it
+# proves the thing this repository exists to do -- so the scenarios run too,
+# against the audit tool installed from the index, exactly as a consumer would
+# get it.
+#
+# The referee is pinned as a range, the way the audit tool pins its engine. Any
+# 0.1.x release lands here without this repository changing, which is precisely
+# the seam a scenario run is able to notice.
+
+name: checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install, with the referee
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet -e '.[referee,dev]'
+          python3 -m pip show bmc-sensor-audit | sed -n 's/^Version: /  referee /p'
+          python3 -m pip show arbiter-engine   | sed -n 's/^Version: /  engine  /p'
+
+      - name: The suite
+        run: python3 -m pytest tests/ -q
+
+      - name: Every scenario parses
+        # Cheap, and it catches a scenario nobody runs in CI. A file that cannot
+        # be parsed is a file that was never going to test anything.
+        run: qa-orchestrator check scenarios/
+
+      - name: The acceptance scenario -- the experiment the tool already ships
+        # Expected to pass. If it stops passing, either the engine changed its
+        # verdict on a series whose shape is fixed, or this harness stopped
+        # driving it correctly -- and both are worth a red.
+        run: qa-orchestrator run scenarios/stuck-at.yaml
+
+      - name: The coverage scenario -- removed, then disabled
+        run: qa-orchestrator run scenarios/sensor-removed.yaml
+
+      - name: A scenario that should fail, does
+        # The non-vacuity check. Every scenario above is expected to pass, so a
+        # harness that had broken into always reporting success would sail
+        # through all of them. This one plants an expectation that is wrong on
+        # purpose and asserts the run refuses it, with exit 1 and not exit 2 --
+        # a disagreement, not a harness that fell over.
+        run: |
+          set -euo pipefail
+          sed 's/exit: 0/exit: 1/' scenarios/sensor-removed.yaml > /tmp/wrong.yaml
+          set +e
+          qa-orchestrator run /tmp/wrong.yaml > /tmp/wrong.log 2>&1
+          code=$?
+          set -e
+          echo "  exited ${code}"
+          test "${code}" -eq 1 || {
+            echo "expected 1 (a verdict disagreed); got ${code}"; cat /tmp/wrong.log; exit 1; }
+          grep -q "mismatch" /tmp/wrong.log
+
+      - name: The testbed tier still refuses
+        # It has no hardware behind it. The day this stops raising is the day a
+        # scenario can claim it pulled a real fan while touching nothing.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from qa_orchestrator.backends import BackendUnavailable, build
+          try:
+              build("testbed", {})
+          except BackendUnavailable as refusal:
+              assert "not implemented" in str(refusal)
+              print("  testbed refuses, as it must")
+          else:
+              raise SystemExit("the testbed backend constructed without a lab behind it")
+          PY

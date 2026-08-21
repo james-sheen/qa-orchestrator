@@ -1,0 +1,14 @@
+{
+  "_why": "A minimal entity-manager declaration for the acceptance scenario. Thresholds are declared, and that is load-bearing rather than decorative: the model generator excludes a sensor that declares none, so a thresholdless board produces an empty liveness model and a clean run that checked nothing. The mock serves the same numbers, so coverage stays quiet and the scenario is about liveness alone.",
+  "Name": "QA Reference Board",
+  "Exposes": [
+    {"Name": "Inlet", "Type": "TMP75",
+     "Thresholds": [
+       {"Name": "upper critical", "Severity": 1, "Direction": "greater than", "Value": 80},
+       {"Name": "upper warning",  "Severity": 0, "Direction": "greater than", "Value": 70}]},
+    {"Name": "Outlet", "Type": "TMP75",
+     "Thresholds": [
+       {"Name": "upper critical", "Severity": 1, "Direction": "greater than", "Value": 80},
+       {"Name": "upper warning",  "Severity": 0, "Direction": "greater than", "Value": 70}]}
+  ]
+}
