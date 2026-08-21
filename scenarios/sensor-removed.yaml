@@ -14,7 +14,7 @@ format: qa-scenario/1
 name: a sensor removed, then one disabled
 backend: mock
 mode: coverage
-config: scenarios/fixtures/board.json
+config: fixtures/board.json
 
 machine:
   sensors:

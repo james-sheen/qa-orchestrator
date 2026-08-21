@@ -20,7 +20,7 @@ format: qa-scenario/1
 name: stuck-at, against a control that keeps moving
 backend: mock
 mode: detect
-config: scenarios/fixtures/board.json
+config: fixtures/board.json
 
 machine:
   # The mock serves the same thresholds the declaration carries. Without them the

@@ -9,8 +9,11 @@ make impossible.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from qa_orchestrator import scenario
 from qa_orchestrator.scenario import ScenarioError, drive_series, parse
 
 MINIMAL = """
@@ -119,3 +122,71 @@ class TestFirmwareExpectations:
                                  "{firmware: {within_walks: 2}}")
         with pytest.raises(ScenarioError, match="names no sensor"):
             parse(broken)
+
+
+class TestAScenarioIsPortable:
+    """A scenario names its config relative to itself, not to whoever ran it.
+
+    Resolving against the working directory made every shipped scenario runnable
+    only from the repository root. Anywhere else the referee could not find the
+    board, returned exit 2, and all four expectations in the file mismatched at
+    once -- so the output read as *the tool disagrees with all of this* rather
+    than *nobody found the config*.
+
+    It surfaced from the pipeline repository's end-to-end test, which runs the
+    scenarios from a temporary workspace the way CI does. Nothing in this
+    repository's own suite could see it: every test here already ran from the
+    root.
+    """
+
+    def _scenario(self, tmp_path, config_line):
+        board = tmp_path / "fixtures" / "board.json"
+        board.parent.mkdir(parents=True, exist_ok=True)
+        board.write_text('{"Name": "B", "Exposes": []}')
+        path = tmp_path / "scenarios" / "s.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "format: qa-scenario/1\nname: s\nbackend: mock\n"
+            f"config: {config_line}\n"
+            "machine: {sensors: [{name: A}]}\n"
+            "phases:\n  - walks: 1\n")
+        return path, board
+
+    def test_a_relative_config_resolves_beside_the_scenario(self, tmp_path):
+        path, board = self._scenario(tmp_path, "../fixtures/board.json")
+        assert scenario.load(path).config == (str(board.resolve()),)
+
+    def test_the_result_does_not_depend_on_the_working_directory(self, tmp_path,
+                                                                 monkeypatch):
+        path, board = self._scenario(tmp_path, "../fixtures/board.json")
+        monkeypatch.chdir(tmp_path)
+        from_here = scenario.load(path).config
+        monkeypatch.chdir("/")
+        assert scenario.load(path).config == from_here
+
+    def test_an_absolute_config_is_left_alone(self, tmp_path):
+        absolute = tmp_path / "fixtures" / "board.json"
+        path, _ = self._scenario(tmp_path, str(absolute))
+        assert scenario.load(path).config == (str(absolute),)
+
+    def test_parsing_a_string_with_no_source_leaves_the_path_as_written(self):
+        parsed = scenario.parse(
+            "format: qa-scenario/1\nname: s\nbackend: mock\n"
+            "config: fixtures/board.json\n"
+            "machine: {sensors: [{name: A}]}\nphases:\n  - walks: 1\n")
+        assert parsed.config == ("fixtures/board.json",)
+
+    def test_every_shipped_scenario_names_its_config_relative_to_itself(self):
+        """The shipped files, not a fixture. A scenario carrying a path that
+        starts with `scenarios/` is one written against the old rule."""
+        root = Path(__file__).resolve().parent.parent / "scenarios"
+        for path in sorted(root.glob("*.yaml")):
+            for line in path.read_text().splitlines():
+                if line.startswith("config:"):
+                    named = line.split(":", 1)[1].strip()
+                    assert not named.startswith("scenarios/"), (
+                        f"{path.name} names {named!r}, which only resolves from "
+                        f"the repository root")
+                    assert (path.parent / named).exists(), (
+                        f"{path.name} names {named!r}, which does not exist "
+                        f"beside it")

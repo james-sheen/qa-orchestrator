@@ -246,6 +246,24 @@ def parse(text: str, source: Path | None = None) -> Scenario:
     _require(config is not None, "a scenario must name a config to judge against")
     config = tuple(config) if isinstance(config, list) else (str(config),)
 
+    # **Relative to the scenario file, not to whoever ran it.** Resolving against
+    # the working directory made a scenario runnable only from the directory it
+    # happened to sit in: the referee could not find the config, returned exit 2,
+    # and every expectation in the file mismatched at once -- so the failure read
+    # as "the tool disagrees with all of this" rather than "nobody found the
+    # board". A pipeline checks the repository out somewhere else and runs from a
+    # workspace root, which is exactly where this bites.
+    #
+    # Found by composing the suite rather than by testing this repository, which
+    # is the argument for the umbrella having its own end-to-end test.
+    #
+    # Normalised as well as resolved, so `scenarios/../fixtures/board.json` is
+    # not what a failure message hands to somebody trying to find the file.
+    if source is not None:
+        base = Path(source).resolve().parent
+        config = tuple(str(Path(entry) if Path(entry).is_absolute()
+                           else (base / entry).resolve()) for entry in config)
+
     mode = raw.get("mode", "detect")
     _require(mode in {"detect", "coverage"},
              f"mode is {mode!r}; expected detect or coverage")
