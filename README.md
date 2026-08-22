@@ -50,17 +50,20 @@ phases:
       firmware: {Outlet: absent, Inlet: reading}
 ```
 
-**Not yet released** — no tag, and no index carries this name. Install it from
-git, which is the same requirement `odm-qa-pipeline` pins for gate 3:
+**Released — 0.1.0**, tagged `v0.1.0`, Apache-2.0, on PyPI as `qa-orchestrator`.
 
 ```
-pip install "qa-orchestrator @ git+https://github.com/james-sheen/qa-orchestrator@master"
+pip install qa-orchestrator
 
-qa-orchestrator run scenarios/sensor-removed.yaml
-qa-orchestrator check scenarios/          # parse only; needs no machine
+qa-orchestrator check <scenario.yaml>     # parse only; needs no machine
+qa-orchestrator run <scenario.yaml>
 ```
 
-From a clone instead, `pip install -e .` puts the same script on the path.
+The two worked scenarios are named with a placeholder above rather than by
+filename, because a wheel carries only what lives under the package directory: a
+`pip install` gives you the command and not the examples. They ship in this
+repository and in the sdist, under `scenarios/`. From a clone,
+`pip install -e .` puts the same script on the path and the scenarios beside it.
 
 **`audit` and `firmware` are different claims and both are worth making.** *The
 sensor is gone* and *the tool noticed it is gone* are separate facts. A scenario

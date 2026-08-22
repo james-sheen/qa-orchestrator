@@ -1,0 +1,32 @@
+qa-orchestrator
+Copyright 2026 James Sheen
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied.
+
+DEPENDENCIES
+
+One at runtime. The scenario format is YAML and the standard library has no
+reader for it; everything else here is stdlib, because this has to run on the
+same bring-up bench the audit tool holds itself to.
+
+    PyYAML                MIT
+
+Two optional, neither of them imported for a verdict:
+
+    bmc-sensor-audit      Apache-2.0   the referee, run as a subprocess and read
+                                       through its exit code and its report --
+                                       see referee.py, and the test that parses
+                                       this package's imports to keep it that way
+    pytest                MIT          tests only; not installed by a plain
+                                       `pip install qa-orchestrator`
+
+Licences read from each distribution's own metadata, not from a list written
+somewhere else and copied.

@@ -9,6 +9,7 @@ description = "Inject faults, drive walks, and check the audit tool reached the 
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "James Sheen" }]
 keywords = ["openbmc", "redfish", "bmc", "qa", "fault-injection", "certification"]
 
@@ -27,11 +28,27 @@ dev = ["pytest>=7"]
 [project.scripts]
 qa-orchestrator = "qa_orchestrator.cli:main"
 
+# Metadata is immutable per version, and a page with no way back to the source
+# is the shape a released 0.1.0 gets stuck with. Declared before the first
+# upload rather than after it.
+[project.urls]
+Homepage = "https://github.com/james-sheen/qa-orchestrator"
+Source = "https://github.com/james-sheen/qa-orchestrator"
+Issues = "https://github.com/james-sheen/qa-orchestrator/issues"
+
 [tool.hatch.version]
 path = "src/qa_orchestrator/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qa_orchestrator"]
+
+# The two worked scenarios reach the sdist and not the wheel: a wheel carries
+# only what lives under the package directory. The README says where they are
+# rather than showing a command that needs them, because a quickstart an
+# installing reader cannot run is worse than one that names a placeholder.
+[tool.hatch.build.targets.sdist]
+include = ["src/", "tests/", "scenarios/", "README.md", "LICENSE", "NOTICE",
+           "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
