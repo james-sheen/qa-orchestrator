@@ -27,7 +27,7 @@ the tool, not a reason to reach past it.
 format: qa-scenario/1
 backend: mock
 mode: coverage
-config: scenarios/fixtures/board.json
+config: fixtures/board.json          # resolved beside this file, not from the cwd
 
 machine:
   sensors:
@@ -50,10 +50,17 @@ phases:
       firmware: {Outlet: absent, Inlet: reading}
 ```
 
+**Not yet released** — no tag, and no index carries this name. Install it from
+git, which is the same requirement `odm-qa-pipeline` pins for gate 3:
+
 ```
+pip install "qa-orchestrator @ git+https://github.com/james-sheen/qa-orchestrator@master"
+
 qa-orchestrator run scenarios/sensor-removed.yaml
 qa-orchestrator check scenarios/          # parse only; needs no machine
 ```
+
+From a clone instead, `pip install -e .` puts the same script on the path.
 
 **`audit` and `firmware` are different claims and both are worth making.** *The
 sensor is gone* and *the tool noticed it is gone* are separate facts. A scenario

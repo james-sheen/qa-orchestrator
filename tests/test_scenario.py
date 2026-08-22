@@ -190,3 +190,21 @@ class TestAScenarioIsPortable:
                     assert (path.parent / named).exists(), (
                         f"{path.name} names {named!r}, which does not exist "
                         f"beside it")
+
+    def test_the_readme_example_is_written_against_the_same_rule(self):
+        """The fix above landed in the loader and in the shipped files, and the
+        README kept the old form for a while afterwards -- which is the copy a
+        reader starts from. Fixing every instance the tests could see is not the
+        same as fixing the class."""
+        readme = Path(__file__).resolve().parent.parent / "README.md"
+        shown = [line for line in readme.read_text().splitlines()
+                 if line.startswith("config:")]
+        assert shown, (
+            "the README no longer shows a `config:` line, so this check has lost "
+            "its subject and would pass by finding nothing")
+        for line in shown:
+            named = line.split(":", 1)[1].split("#", 1)[0].strip()
+            assert not named.startswith("scenarios/"), (
+                f"the README shows {named!r}; copied into a scenario file that "
+                f"resolves to scenarios/scenarios/, and it is the first thing a "
+                f"reader copies")
