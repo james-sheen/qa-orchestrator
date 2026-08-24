@@ -48,8 +48,15 @@ INDEX_INSTALL = re.compile(
     + r"(?:\[[A-Za-z0-9,_\-]+\])?['\"]?(?!\s*@)")
 
 
-#: The tag the Status line names, so the two records of one version can be
-#: compared without asking git anything.
+# **The ANCHOR for every version record in this repository.** `pyproject.toml`
+# reads the literal for packaging, so it is the one record that cannot disagree
+# with the artifact -- and the only one that answers in an sdist and in a shallow
+# checkout with no tags. Everything else is compared against it, never against
+# another derivation of it.
+NO_RELEASE = "0.0.0"
+
+#: The tag the README's Status line names, so the two can be compared without
+#: asking git anything.
 TAGGED = re.compile(r"tagged `([^`]+)`")
 
 #: The tag namespace this project releases in: `v` and a dotted version.
@@ -57,9 +64,20 @@ _TOOL_TAG = re.compile(r"^v(\d+(?:\.\d+)*)$")
 
 
 def _released_versions(tags):
-    """Every tag that names a version of THIS package, as comparable tuples."""
+    """Every tag naming a version of THIS package, as comparable tuples."""
     return [tuple(int(part) for part in match.group(1).split("."))
             for match in (_TOOL_TAG.match(tag) for tag in tags) if match]
+
+
+def _named_tag():
+    """The tag string the README's Status line names, or None."""
+    found = TAGGED.search(README.read_text())
+    return found.group(1) if found else None
+
+
+def _version():
+    from qa_orchestrator import __version__
+    return __version__
 
 
 def _tags():
@@ -133,72 +151,70 @@ class TestTheReadmeDoesNotPromiseAnIndex:
             f"the README announces {released.group(1)} and the package reports "
             f"{__version__}; both are published records of one fact")
 
-    def test_the_readme_names_the_tag_its_own_version_will_carry(self):
-        """The stale-tag-string guard, and it is TREE-LOCAL on purpose.
+    def test_the_readme_names_the_tag_this_version_will_carry(self):
+        """The tag string and the version literal, compared without asking git.
 
-        The Status line carries two records of one fact -- the version it
-        announces and the tag it names -- and until now **nothing compared
-        them**. A README announcing 0.1.2 while still naming `v0.1.1` sends a
-        reader to a tag that describes different code, and both strings look
-        right in isolation.
+        **The anchor is the version LITERAL.** It is what the package reports
+        about itself, what `pyproject.toml` reads for packaging, and the only one
+        of these records that answers in an sdist and in a shallow checkout with
+        no tags. Every other record is derived from it, so every other record is
+        compared against it rather than against another derivation.
 
-        Answerable from the tree alone, so it holds in an sdist, in a shallow
-        checkout with no tags, and at every instant of a release. The check below
+        The Status line carries a tag string that nothing used to check, so a
+        `v0.1.1` left behind by a bump to 0.1.2 sent a reader to a tag describing
+        different code -- and both strings look right in isolation.
+
+        Tree-local, so it holds at every instant of a release. The check below
         cannot say that of itself.
         """
-        body = README.read_text()
-        released = RELEASED.search(body)
-        named = TAGGED.search(body)
-        if not released:
+        version = _version()
+        named = _named_tag()
+        if version == NO_RELEASE:
             assert named is None, (
-                f"the README names the tag {named.group(1)!r} while describing "
-                f"this project as unreleased; an unreleased tree must not hand a "
-                f"reader a tag to check out")
+                f"the README names the tag {named!r} while the package reports "
+                f"{NO_RELEASE}; an unreleased tree must not hand a reader a tag "
+                f"to check out")
             return
         assert named, (
-            f"the README announces {released.group(1)} and names no tag. The "
-            f"Status line should read: tagged `v{released.group(1)}`")
-        assert named.group(1) == f"v{released.group(1)}", (
-            f"the README announces {released.group(1)} and names the tag "
-            f"{named.group(1)!r}; they must be `v{released.group(1)}`. A leading "
-            f"v dropped from one, or a tag string left behind by a bump, is how "
-            f"these two part company")
+            f"the package reports {version} and the README names no tag. The "
+            f"Status line should read: tagged `v{version}`")
+        assert named == f"v{version}", (
+            f"the README names the tag {named!r} and the package reports "
+            f"{version}; they must be `v{version}`. A leading v dropped from one, "
+            f"or a tag string left behind by a bump, is how these two part company")
 
-    def test_an_announced_release_has_a_tag_behind_it(self):
+    def test_a_tag_and_the_tree_do_not_disagree(self):
         """A tag is the one part of the claim the tree cannot write about itself.
 
         **What was wrong with this before.** It tolerated only a repository with
-        NO TAGS AT ALL, which stopped being true at the first release -- so from
-        then on it went red between the version bump and the tag, every release,
-        at exactly the moment somebody is most likely to reach for `--no-verify`.
-        The tag is made OF the commit that bumps the version, so that window
-        cannot be closed by doing things in a different order.
+        NO TAGS AT ALL -- true when written, false forever after the first
+        release. The tag is made OF the commit that bumps the version, so from
+        then on it went red between the bump and the tag, every release, at the
+        moment somebody is most likely to reach for `--no-verify`.
 
-        Worse than red, it also RACED. CI fetches whatever tags the remote holds
-        at checkout, and a release pushes master before the tag -- so the release
+        Worse than red, it RACED. CI fetches whatever tags the remote holds at
+        checkout and a release pushes master before the tag, so a release
         commit's own CI run passed or failed on which push won.
 
-        **The window is carved out precisely rather than widened.** Only this
-        version may be untagged, and only while no later version is tagged: a
-        release in flight is always the newest one. Reverting a bump while
-        leaving its tag, or tagging from the wrong commit, both leave a later tag
-        behind and still fail here.
+        **The window is carved to the rule rather than widened.** Only this
+        version may be untagged, and only while no LATER version is tagged: a
+        release in flight is always the newest one. A reverted bump that left its
+        tag, or a tag made from the wrong commit, both leave a later tag behind
+        and still fail here.
 
-        Whether the tag was ever pushed is a fact about the REMOTE, and no
+        Whether the tag was ever PUSHED is a fact about the remote, and no
         assertion from a working tree can reach it. Saying so is the honest
         version; asserting it would be a check that is right by luck.
         """
-        released = RELEASED.search(README.read_text())
-        if not released:
-            return
         tags = _tags()
         if not tags:
             pytest.skip("no tags visible here; *cannot tell* is not *no tags*")
-
-        version = released.group(1)
+        version = _version()
+        assert version != NO_RELEASE, (
+            f"the repository has tags {tags} and the package still reports "
+            f"{NO_RELEASE}")
         if f"v{version}" in tags:
             return
-
         current = tuple(int(part) for part in version.split("."))
         ahead = sorted(t for t in _released_versions(tags) if t > current)
         assert not ahead, (
@@ -210,9 +226,9 @@ class TestTheReadmeDoesNotPromiseAnIndex:
             f"made from the wrong commit")
         pytest.skip(
             f"v{version} is not tagged in this tree. The tag is made OF the "
-            f"commit that sets the version, so this is the one legitimate window "
-            f"and `git tag -a v{version}` closes it. Whether the tag was ever "
-            f"pushed is a fact about the remote rather than this tree.")
+            f"commit that sets the version literal, so this is the one legitimate "
+            f"window and `git tag -a v{version}` closes it. Whether the tag was "
+            f"ever pushed is a fact about the remote rather than this tree.")
 
     def test_the_matcher_finds_a_bare_install_when_there_is_one(self):
         """The prohibition above is only worth as much as the pattern under it."""
