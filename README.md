@@ -50,7 +50,14 @@ phases:
       firmware: {Outlet: absent, Inlet: reading}
 ```
 
-**Released — 0.1.0**, tagged `v0.1.0`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.1.1**, tagged `v0.1.1`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+0.1.1 makes the scenario schema's `fail` action work. It was documented from
+the start and had never run: the referee's `capture` exits `2` both when it
+cannot reach the machine and when it reached the machine and a subtree
+answered with an error, and this harness raised on either — so a scenario that
+induced a partial walk aborted before the referee could be asked anything.
+Every walk also carries a content handle now. Needs `bmc-sensor-audit` 0.1.1.
 
 ```
 pip install qa-orchestrator
