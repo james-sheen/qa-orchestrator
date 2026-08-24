@@ -1,0 +1,44 @@
+# A subtree stops answering, so the walk cannot complete.
+#
+# This is the `fail` action, and until 0.1.1 of the referee it could not be
+# expressed at all: `capture` exits 2 both when it cannot reach the machine and
+# when it reached the machine and one subtree answered with an error, and the
+# orchestrator raised on any non-zero. So a scenario like this one aborted the run
+# before the referee could be asked anything. No shipped scenario used the action
+# and no test exercised it, which is why it had never once worked.
+#
+# **What it is actually testing is the referee's honesty about not knowing.** A
+# partial walk is the case where the audit tool must NOT report absence: a subtree
+# it could not read is indistinguishable from a subtree with nothing in it, and a
+# tool that rendered a network error as `2 sensors missing` would be worse than
+# useless on a real line. Exit 2 is the tool saying so.
+#
+# The firmware expectation in phase 2 is deliberately absent. The mock is refusing
+# to serve that path, so asking it for a sensor's state would be asking the same
+# broken interface that produced the partial walk.
+
+format: qa-scenario/1
+name: a subtree stops answering, so the walk is partial
+backend: mock
+mode: coverage
+config: fixtures/board.json
+
+machine:
+  sensors:
+    - {name: Inlet,  reading: 21.0, upper_critical: 80, upper_warning: 70}
+    - {name: Outlet, reading: 27.5, upper_critical: 80, upper_warning: 70}
+
+phases:
+  - note: a healthy board, so the gate should be quiet
+    walks: 1
+    expect:
+      audit: {exit: 0}
+      firmware: {Inlet: reading, Outlet: reading}
+
+  - note: the sensors collection answers 500, so the walk is incomplete
+    walks: 1
+    action: {fail: {path: /redfish/v1/Chassis/1/Sensors, status: 500}}
+    expect:
+      audit:
+        exit: 2
+        finding: "walk did not finish"

@@ -28,6 +28,25 @@ class RunResult:
     phases: list[PhaseResult]
     walks_taken: int
     error: str | None = None
+    #: One entry per walk, in order. Carries each walk's content handle and
+    #: whether the machine answered for all of it.
+    captures: tuple = ()
+
+    def evidence(self) -> list[str]:
+        """One line per walk: its content handle, and whether it was complete.
+
+        **A clean run deletes its workdir**, so on the run that most needs no
+        further explanation the walks are gone. The handles survive it. They are
+        the tool's own -- `sha256:` over the file's bytes -- so anyone who kept a
+        walk can match it with `sha256sum` and no tooling at all, and a walk that
+        cannot be matched is not the walk that was judged.
+        """
+        lines = []
+        for index, taken in enumerate(self.captures, start=1):
+            state = "complete" if taken.complete else "PARTIAL"
+            lines.append(f"walk {index:03d}  {state:8}  "
+                         f"{taken.digest or '(no handle printed)'}")
+        return lines
 
     @property
     def mismatches(self) -> list[Mismatch]:
@@ -66,6 +85,7 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
 
     phases: list[PhaseResult] = []
     walks: list[Path] = []
+    captures: list[referee.Capture] = []
     backend = None
     error = None
 
@@ -98,8 +118,17 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
                 # the port moves. Capturing against a stale URL would fail in a
                 # way that reads like an unreachable BMC.
                 target = backend.start()
-                walk = referee.capture(target, workdir / f"walk_{len(walks) + 1:03d}.json")
-                walks.append(walk)
+                taken = referee.capture(
+                    target, workdir / f"walk_{len(walks) + 1:03d}.json")
+                walks.append(taken.path)
+                captures.append(taken)
+                if not taken.complete:
+                    # Said out loud, because a partial walk changes what every
+                    # verdict below it can mean: the referee withholds absence
+                    # findings on one, so a phase that expected a sensor to be
+                    # reported missing will not see it reported at all.
+                    say(f"  walk {len(walks)} is PARTIAL -- the machine did not "
+                        f"answer for all of it")
 
             observed: dict[str, str] = {}
             if phase.expect_firmware is not None:
@@ -133,7 +162,8 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
                 pass
 
     result = RunResult(scenario=scenario, phases=phases,
-                       walks_taken=len(walks), error=error)
+                       walks_taken=len(walks), error=error,
+                       captures=tuple(captures))
     if owned:
         if result.exit_code() == EXIT_CLEAN:
             shutil.rmtree(workdir, ignore_errors=True)

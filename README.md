@@ -142,6 +142,49 @@ deliberately: a sensor declaring none is excluded from the liveness model entire
 so a thresholdless board produces an empty model and a clean run that checked
 nothing.
 
+## A partial walk is evidence, not a failed run
+
+The audit tool's `capture` exits `2` for two different facts: it could not reach
+the machine, and it reached the machine while one subtree answered with an error.
+The second is a walk the tool **writes and keeps on purpose**, because knowing
+which subtree failed is the point.
+
+This harness used to raise on any non-zero, so the scenario schema's `fail`
+action — *make a subtree answer with an HTTP status* — aborted the run before the
+referee could be asked anything. No shipped scenario used it and no test
+exercised it, so it had never once worked. `scenarios/partial-walk.yaml` is that
+scenario, and it now runs.
+
+The fix is to judge the **file** rather than the exit code. `validate-walk` says
+whether what was written is a well-formed `walk/1` — a question about the artifact
+rather than about the run — and the walk's own error list says whether the machine
+answered for all of it. A capture that produced no readable walk is still a
+failure and still stops the run.
+
+What it is really testing is the referee's honesty about not knowing. A subtree it
+could not read is indistinguishable from a subtree with nothing in it, so the tool
+must **not** report absence on a partial walk. Exit `2` is it saying so, and a
+tool that rendered a network error as *two sensors missing* would be worse than
+useless on a line.
+
+## Every walk gets a content handle
+
+```
+evidence:
+  walk 001  complete  sha256:81422480ba090695df9f8dabb6aba4cd849048f137ca5707558fbcd03e43950e
+  walk 002  PARTIAL   sha256:19cb099c107403ad68a8ce0c29cfc6d0a6724dde688ad815347a8a2192e91835
+```
+
+Printed by every run, including one that stopped early. **A clean run deletes its
+workdir**, so the run that needs no further explanation is exactly the one whose
+walks are gone — the handles outlive them.
+
+They are the tool's own, from `capture --print-digest`: a SHA-256 over the file's
+bytes, which `sha256sum` reproduces in any language. Anyone who kept a walk can
+match it with no tooling and nothing to trust, and a walk that does not match is
+not the walk that was judged. This program reads the handle rather than computing
+one, because two definitions of one number is how the two come to disagree.
+
 ## Not built yet
 
 - The redundancy scenario against the audit tool's supplemental template.

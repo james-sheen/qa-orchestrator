@@ -65,6 +65,16 @@ def _run(path: str, workdir: str | None) -> int:
                  on_event=lambda message: print(message))
 
     print()
+    # Printed BEFORE the error branch, so a run that stopped early still leaves
+    # the record of what it managed to walk. That is exactly the run whose walks
+    # somebody will want to match against later.
+    evidence = result.evidence()
+    if evidence:
+        print("evidence:")
+        for line in evidence:
+            print(f"  {line}")
+        print()
+
     if result.error:
         print(f"could not complete: {result.error}", file=sys.stderr)
         return EXIT_INCOMPLETE

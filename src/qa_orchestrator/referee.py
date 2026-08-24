@@ -18,6 +18,7 @@ feature request against the tool -- not a reason to reach past it.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -80,16 +81,92 @@ def executable() -> str:
     return found
 
 
-def capture(target: str, out: Path, *, timeout: float = 60) -> Path:
-    """Record one walk. The tool's own `capture` subcommand, no substitute."""
+#: The tool's content handle for a capture: `sha256:` and 64 hex characters.
+#: Matched as a SHAPE rather than by the label beside it -- a heading can be
+#: reworded and a scraper keyed on one stops matching in silence, which is the
+#: reason `judge` below asks for JSON twice rather than parsing prose.
+_DIGEST = re.compile(r"\bsha256:[0-9a-f]{64}\b")
+
+
+@dataclass(frozen=True)
+class Capture:
+    """One walk, and whether the machine answered for all of it.
+
+    `complete` is False for a walk the tool wrote anyway because a partial
+    capture is still evidence -- it records WHICH subtree failed. That is a
+    different fact from a capture that could not be made at all, and the two
+    used to be one exit code here.
+    """
+
+    path: Path
+    complete: bool
+    digest: str | None = None
+
+
+def capture(target: str, out: Path, *, timeout: float = 60) -> Capture:
+    """Record one walk. The tool's own `capture` subcommand, no substitute.
+
+    **The exit code cannot answer the question this function asks, and reading it
+    as though it could disabled a documented feature.** `capture` returns `2` both
+    when it could not reach the machine and when it reached the machine and one
+    subtree answered with an error -- and the second is a walk the tool
+    deliberately writes and keeps, because knowing which subtree failed is the
+    point. Raising on any non-zero made the scenario schema's `fail` action --
+    *make a subtree answer with an HTTP status (a partial walk)* -- abort the run
+    before the referee could be asked anything. Measured: no shipped scenario used
+    it and no test exercised it, so it had never once worked.
+
+    So the FILE is judged instead of the exit code. `validate-walk` says whether
+    what was written is a well-formed `walk/1`, which is a question about the
+    artifact rather than about the run, and the walk's own error list says whether
+    the machine answered for all of it. A capture that produced no readable walk
+    is still a failure and still raises.
+    """
     result = subprocess.run(
-        [executable(), "capture", "--target", target, "--out", str(out)],
+        [executable(), "capture", "--target", target, "--out", str(out),
+         "--print-digest"],
         capture_output=True, text=True, timeout=timeout)
-    if result.returncode != 0 or not out.exists():
+
+    if not out.exists():
         raise RuntimeError(
-            f"capture failed with exit {result.returncode}: "
+            f"capture wrote no walk and exited {result.returncode}: "
             f"{(result.stderr or result.stdout).strip()[:400]}")
-    return out
+
+    problems = validate_walk(out, timeout=timeout)
+    if problems is not None:
+        raise RuntimeError(
+            f"capture exited {result.returncode} and wrote a file the tool's own "
+            f"validator refuses, so nothing here can be judged from it: {problems}")
+
+    if result.returncode not in (EXIT_CLEAN, EXIT_INCOMPLETE):
+        # A code outside the documented interface is not a partial walk. Same rule
+        # the pipeline applies to a `127` from a missing command: unrecognised
+        # reads as could-not-complete, with the raw code kept beside it.
+        raise RuntimeError(
+            f"capture exited {result.returncode}, which is outside the tool's "
+            f"documented 0/1/2 interface: "
+            f"{(result.stderr or result.stdout).strip()[:400]}")
+
+    found = _DIGEST.search(result.stdout)
+    return Capture(path=out, complete=result.returncode == EXIT_CLEAN,
+                   digest=found.group(0) if found else None)
+
+
+def validate_walk(path: Path, *, timeout: float = 60) -> str | None:
+    """`None` if the file is a well-formed walk, else what the tool said is wrong.
+
+    A separate invocation rather than an inference from `capture`'s exit code,
+    because they answer different questions: one is about the run, the other about
+    the artifact. It needs no engine and no hardware -- that is the whole reason
+    the tool ships it as a subcommand rather than keeping the rule in its own CI.
+    """
+    result = subprocess.run(
+        [executable(), "validate-walk", str(path)],
+        capture_output=True, text=True, timeout=timeout)
+    if result.returncode == EXIT_CLEAN:
+        return None
+    return (result.stderr or result.stdout).strip()[:400] or (
+        f"validate-walk exited {result.returncode} and said nothing")
 
 
 def judge(mode: str, config: tuple[str, ...], walks: list[Path], *,

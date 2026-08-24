@@ -22,7 +22,9 @@ dependencies = ["pyyaml>=6"]
 # The referee. Invoked as a subprocess, never imported for its verdicts -- see
 # referee.py. Declared as an extra rather than a hard dependency so `check`
 # (parse-only) works with nothing else installed.
-referee = ["bmc-sensor-audit[detect]>=0.1,<0.2"]
+# 0.1.1 is the floor and not a preference: `referee.capture` reads
+# `--print-digest` and calls `validate-walk`, and neither exists before it.
+referee = ["bmc-sensor-audit[detect]>=0.1.1,<0.2"]
 dev = ["pytest>=7"]
 
 [project.scripts]
