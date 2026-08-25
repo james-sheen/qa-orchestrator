@@ -50,7 +50,13 @@ phases:
       firmware: {Outlet: absent, Inlet: reading}
 ```
 
-**Released — 0.1.1**, tagged `v0.1.1`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.1.2**, tagged `v0.1.2`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.1.2 changes nothing this package does.** It carries the repository's
+publication-hygiene tooling: the rules now run over commit messages as well as
+files, and a pre-commit hook refuses a commit whose staged content it has not
+read. The only differences a reader will find in the installed distribution are
+this paragraph and the version number. Nothing here obliges an upgrade.
 
 0.1.1 makes the scenario schema's `fail` action work. It was documented from
 the start and had never run: the referee's `capture` exits `2` both when it
