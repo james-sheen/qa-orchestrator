@@ -22,6 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from .run import EXIT_CLEAN, EXIT_INCOMPLETE, EXIT_MISMATCH, run
 from .scenario import ScenarioError, load
 
@@ -101,6 +102,12 @@ def _run(path: str, workdir: str | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="qa-orchestrator", description=__doc__.splitlines()[0])
+    # The pipeline runs this as a SUBPROCESS resolved on PATH, so its declared
+    # floor governs what pip installed and not what actually answers. Without a
+    # version flag there is nothing a caller can ask, and `--version` exited 2
+    # with a usage error -- indistinguishable from a real refusal.
+    parser.add_argument("--version", action="version",
+                        version=f"qa-orchestrator {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     runner = sub.add_parser("run", help="run a scenario against its backend")

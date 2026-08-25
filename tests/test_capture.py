@@ -251,3 +251,36 @@ class TestTheShippedScenarioExercisesTheAction:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+class TestTheToolCanBeAskedWhatItIs:
+    """`--version`, for the same reason the referee needed one.
+
+    `odm-qa-pipeline` runs this as a subprocess resolved on PATH and declares
+    `qa-orchestrator>=0.1.1,<0.2` in its manifest. pip enforces that over the
+    environment it installed into; PATH decides what actually answers. Without a
+    version flag a caller had nothing to ask, and `--version` exited 2 with an
+    argparse usage error -- which in this family's vocabulary means
+    could-not-complete, indistinguishable from a real refusal.
+    """
+
+    def _run(self, *args):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        return subprocess.run(
+            [sys.executable, "-m", "qa_orchestrator.cli", *args],
+            capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": str(root / "src")})
+
+    def test_it_exits_clean_on_stdout(self):
+        done = self._run("--version")
+        assert done.returncode == 0, done.stderr
+        assert done.stderr == ""
+
+    def test_it_reports_the_version_the_package_declares(self):
+        from qa_orchestrator import __version__
+        assert self._run("--version").stdout.strip() == \
+            f"qa-orchestrator {__version__}"
