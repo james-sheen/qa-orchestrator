@@ -7,4 +7,4 @@ it lives outside the tool -- a referee that shipped its own injector would be
 certifying itself.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"

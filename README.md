@@ -50,7 +50,14 @@ phases:
       firmware: {Outlet: absent, Inlet: reading}
 ```
 
-**Released — 0.1.2**, tagged `v0.1.2`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.2.0**, tagged `v0.2.0`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.2.0 raises the referee floor to 0.2.0 and adds `--version`.** The floor is
+the point: from `bmc-sensor-audit` 0.2.0 a command that asks to verify and not
+to verify at once is refused rather than run unverified, and a harness that
+drives a referee should not be what pins it below its own security fix. This
+package's own behaviour is unchanged. The suite now runs on every Python it
+claims.
 
 **0.1.2 changes nothing this package does.** It carries the repository's
 publication-hygiene tooling: the rules now run over commit messages as well as
