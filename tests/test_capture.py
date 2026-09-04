@@ -70,7 +70,10 @@ class _Fake:
 
 @pytest.fixture
 def faked(monkeypatch):
-    monkeypatch.setattr(referee, "executable", lambda: "bmc-sensor-audit")
+    # Takes the profile the caller now passes, and ignores it: these tests are
+    # about how a capture is judged, not about which tool made it.
+    monkeypatch.setattr(referee, "executable",
+                        lambda tool=None: "bmc-sensor-audit")
 
     def install(fake):
         monkeypatch.setattr(referee.subprocess, "run", fake)

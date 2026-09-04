@@ -162,6 +162,12 @@ account that exists and has stopped settling.
 `register()` refuses to shadow a built-in tier, because silently replacing `mock`
 would make a run report a tier it did not use.
 
+Until 0.2.1 the second half of that line was not true: the parser kept its own copy
+of the built-in tier names and refused a registered one before `build` was ever
+reached, so a vertical could construct its own backend and could not write a
+scenario that named it. The list is asked of the registry now. Every test called
+`build` directly, which is why nothing saw it.
+
 **Both vocabularies are read.** `entities:`/`entity:` and `sensors:`/`sensor:` mean
 the same thing in a scenario, as do `expect.substrate` and `expect.firmware`. The
 scenario format stays `qa-scenario/1`: the test for a format bump is whether an
@@ -169,6 +175,45 @@ older reader would *silently ignore* a new key, and it would not — it validate
 action payload and refuses the new spellings by name. A loud refusal is a reader
 correctly declining a file it does not understand, which is what the version
 already means.
+
+## And the program that grades it is yours too
+
+A backend is the substrate. The **referee** is the program being graded — by
+default `bmc-sensor-audit`, because that is what this harness was built against.
+It was a string literal until 0.2.1: its name, its subcommands, its flag names and
+its report schema were all fixed here, so a scenario could describe a paper
+vertical and could never run one.
+
+A referee is a profile:
+
+```python
+from qa_orchestrator.referee import Tool, register_tool
+
+register_tool(Tool(
+    name="proposal-review",
+    executable="proposal-review",
+    install_hint="pip install proposal-review",
+    modes=("review",),                     # `mode:` means whatever this tool says
+    capture_argv=lambda target, out: ("record", target, str(out)),
+    validate_argv=lambda path: ("check", str(path)),
+    judge_argv=lambda mode, configs, walks: (mode, *_flags(configs, walks)),
+    json_argv=lambda mode: ("--as-json",),
+    findings_key="issues",                 # where the report keeps them
+    subject_keys=("requirement",),         # where a finding keeps its subject
+))                                         # then `referee: proposal-review`
+```
+
+**What a profile cannot do is as much the point as what it can.** It supplies the
+arguments after the executable, never the executable itself; and it has no say in
+how any answer is read. Spawning the process, interpreting `0/1/2`, and judging
+the captured artifact stay in `referee.py`, because those must behave identically
+for every vertical — a profile that could reinterpret an exit code could make `2`
+read as clean.
+
+`tests/test_referee_profile.py` runs a scenario end to end with a paper backend and
+a referee whose command line takes positional arguments where the built-in tool
+takes flags. Nothing in that run installs, imports or invokes `bmc-sensor-audit`,
+and one of its tests removes the tool from `PATH` to prove it.
 
 ## Exit codes
 

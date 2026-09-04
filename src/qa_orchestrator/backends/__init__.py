@@ -118,6 +118,18 @@ def register(name: str, factory: Callable[[dict], "Backend"]) -> None:
     _REGISTERED[name] = factory
 
 
+def known() -> tuple[str, ...]:
+    """Every tier a scenario may name: the built-in ones plus any registered.
+
+    One place, and it exists because there used to be two. The parser kept its
+    own copy of the built-in list and refused a registered tier before `build`
+    was ever reached -- so the door `register` opens was shut one module up, and
+    a vertical could construct its own backend but could not write a scenario
+    that named it. Every test called `build` directly, so nothing could see it.
+    """
+    return tuple(sorted(set(_BUILTIN) | set(_REGISTERED)))
+
+
 def build(name: str, machine: dict) -> Backend:
     """Construct a backend by name, or raise with the known tiers listed."""
     if name in _REGISTERED:

@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import backends
+from .referee import known_tools, profile
+
 FORMAT = "qa-scenario/1"
 
 # Every action this build can perform. A closed set, checked at parse time: an
@@ -33,9 +36,6 @@ ACTIONS = {
     "drift":   "move an entity's value, once",
     "drive":   "set an entity's value before each walk of this phase, in order",
 }
-
-BACKENDS = {"mock", "qemu", "testbed"}
-
 
 class ScenarioError(ValueError):
     """A scenario that cannot be run as written. Always names where."""
@@ -96,6 +96,10 @@ class Scenario:
     phases: tuple[Phase, ...]
     machine: dict[str, Any] = field(default_factory=dict)
     mode: str = "detect"
+    #: Which program grades the run. Named, because a vertical that supplies its
+    #: own substrate has its own tool to grade with, and `mode` means whatever
+    #: that tool says it means.
+    referee: str = "bmc-sensor-audit"
     source: Path | None = None
 
     @property
@@ -254,9 +258,12 @@ def parse(text: str, source: Path | None = None) -> Scenario:
              f"checked rather than assumed because three separate programs read "
              f"this file")
 
+    # Asked of the registry, never of a copy kept here. A second copy of this
+    # list is what made `register` a door into a room with no entrance.
+    tiers = backends.known()
     backend = raw.get("backend")
-    _require(backend in BACKENDS,
-             f"backend is {backend!r}; expected one of {sorted(BACKENDS)}")
+    _require(backend in tiers,
+             f"backend is {backend!r}; expected one of {list(tiers)}")
 
     config = raw.get("config")
     _require(config is not None, "a scenario must name a config to judge against")
@@ -280,9 +287,19 @@ def parse(text: str, source: Path | None = None) -> Scenario:
         config = tuple(str(Path(entry) if Path(entry).is_absolute()
                            else (base / entry).resolve()) for entry in config)
 
-    mode = raw.get("mode", "detect")
-    _require(mode in {"detect", "coverage"},
-             f"mode is {mode!r}; expected detect or coverage")
+    # The referee, and then the modes ITS profile declares. `mode` used to be
+    # checked against two names written here, which are two of the built-in
+    # tool's subcommands -- so a scenario could name another referee and would
+    # still be held to this one's vocabulary.
+    referee_name = raw.get("referee", "bmc-sensor-audit")
+    tiers = known_tools()
+    _require(referee_name in tiers,
+             f"referee is {referee_name!r}; expected one of {list(tiers)}")
+    graded_by = profile(str(referee_name))
+
+    mode = raw.get("mode", graded_by.modes[0])
+    _require(mode in graded_by.modes,
+             f"mode is {mode!r}; {referee_name} has {list(graded_by.modes)}")
 
     raw_phases = raw.get("phases")
     _require(isinstance(raw_phases, list) and raw_phases,
@@ -316,7 +333,7 @@ def parse(text: str, source: Path | None = None) -> Scenario:
     name = raw.get("name") or (source.stem if source else "unnamed")
     return Scenario(name=str(name), backend=str(backend), config=config,
                     phases=tuple(phases), machine=raw.get("machine") or {},
-                    mode=mode, source=source)
+                    mode=mode, referee=str(referee_name), source=source)
 
 
 def load(path: str | Path) -> Scenario:

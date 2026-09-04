@@ -90,6 +90,7 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
     error = None
 
     try:
+        graded_by = referee.profile(scenario.referee)
         backend = build(scenario.backend, scenario.machine)
         url = backend.start()
         say(f"{scenario.backend} backend up at {url}")
@@ -121,7 +122,8 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
                 # way that reads like an unreachable BMC.
                 target = backend.start()
                 taken = referee.capture(
-                    target, workdir / f"walk_{len(walks) + 1:03d}.json")
+                    target, workdir / f"walk_{len(walks) + 1:03d}.json",
+                    tool=graded_by)
                 walks.append(taken.path)
                 captures.append(taken)
                 if not taken.complete:
@@ -140,7 +142,8 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
             verdict = None
             mismatches: list[Mismatch] = []
             if phase.expect is not None:
-                verdict = referee.judge(scenario.mode, scenario.config, walks)
+                verdict = referee.judge(scenario.mode, scenario.config, walks,
+                                        tool=graded_by)
                 mismatches += compare_audit(phase.expect, verdict)
             if phase.expect_firmware is not None:
                 mismatches += compare_firmware(phase.expect_firmware, observed)
