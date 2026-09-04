@@ -26,15 +26,19 @@ class MockBackend:
     name = "mock"
 
     def __init__(self, machine: dict) -> None:
-        sensors = machine.get("sensors") or []
-        if not sensors:
+        # Both spellings. `entities` is the protocol's word; `sensors` is what
+        # every scenario written before it says, and those files are on disk and
+        # published. Reading one and refusing the other would break them for a
+        # rename.
+        entities = machine.get("entities") or machine.get("sensors") or []
+        if not entities:
             raise BackendUnavailable(
-                "the mock backend needs machine.sensors in the scenario -- it has "
-                "no firmware to read a sensor list from, so the scenario supplies "
-                "it. An empty machine would make every declared sensor absent and "
-                "every phase pass for that reason.")
+                "the mock backend needs machine.entities (or machine.sensors) in "
+                "the scenario -- it has no firmware to read a list from, so the "
+                "scenario supplies it. An empty machine would make every declared "
+                "entity absent and every phase pass for that reason.")
         self._bmc = MockBMC(shape=machine.get("shape", "sensors"))
-        for spec in sensors:
+        for spec in entities:
             if isinstance(spec, str):
                 spec = {"name": spec}
             fields = {k: v for k, v in spec.items() if k != "name"}
@@ -57,30 +61,30 @@ class MockBackend:
     # Each maps to a documented condition the referee already has an opinion
     # about, so the harness cannot ask a question the tool cannot answer.
 
-    def remove(self, sensor: str) -> None:
-        self._require(sensor)
-        self._bmc.remove(sensor)
+    def remove(self, entity: str) -> None:
+        self._require(entity)
+        self._bmc.remove(entity)
         self._restart()
 
-    def disable(self, sensor: str) -> None:
-        self._require(sensor)
-        self._bmc.disable(sensor)
+    def disable(self, entity: str) -> None:
+        self._require(entity)
+        self._bmc.disable(entity)
         self._restart()
 
     def fail(self, path: str, status: int) -> None:
         self._bmc.fail[path] = int(status)
         self._restart()
 
-    def set_reading(self, sensor: str, value: float) -> None:
-        found = self._require(sensor)
+    def set_reading(self, entity: str, value: float) -> None:
+        found = self._require(entity)
         found.reading = float(value)
         self._restart()
 
     # -- observation ------------------------------------------------------
 
-    def state(self, sensor: str) -> str:
+    def state(self, entity: str) -> str:
         for candidate in self._bmc.sensors:
-            if candidate.name == sensor:
+            if candidate.name == entity:
                 if candidate.reading is None or candidate.state != "Enabled":
                     return "disabled"
                 return "reading"
@@ -88,19 +92,19 @@ class MockBackend:
 
     # -- internals --------------------------------------------------------
 
-    def _require(self, sensor: str) -> MockSensor:
-        """Refuse an injection against a sensor that is not there.
+    def _require(self, entity: str) -> MockSensor:
+        """Refuse an injection against an entity that is not there.
 
         A typo in a scenario would otherwise perturb nothing and let the phase
         pass, which is indistinguishable from the tool failing to notice a real
         fault -- the exact confusion this harness exists to remove.
         """
         for candidate in self._bmc.sensors:
-            if candidate.name == sensor:
+            if candidate.name == entity:
                 return candidate
         known = ", ".join(sorted(s.name for s in self._bmc.sensors)) or "(none)"
         raise BackendUnavailable(
-            f"no sensor named {sensor!r} on this machine; it has: {known}")
+            f"no entity named {entity!r} on this machine; it has: {known}")
 
     def _restart(self) -> None:
         """Re-serve so the next walk sees the change.

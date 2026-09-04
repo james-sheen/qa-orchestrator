@@ -27,11 +27,11 @@ FORMAT = "qa-scenario/1"
 # perturbed the machine is exactly the phase whose absence makes everything
 # afterwards pass for the wrong reason.
 ACTIONS = {
-    "remove":  "make a sensor vanish from the tree entirely (the firmware-upgrade case)",
-    "disable": "switch a sensor off; it stays declared and stops reading",
-    "fail":    "make a subtree answer with an HTTP status (a partial walk)",
-    "drift":   "move a sensor's reading to a value, once",
-    "drive":   "set a sensor's reading before each walk of this phase, in order",
+    "remove":  "make an entity vanish entirely (for a BMC, the firmware-upgrade case)",
+    "disable": "switch an entity off; it stays declared and stops reporting",
+    "fail":    "make a region answer with an error status (a partial read)",
+    "drift":   "move an entity's value, once",
+    "drive":   "set an entity's value before each walk of this phase, in order",
 }
 
 BACKENDS = {"mock", "qemu", "testbed"}
@@ -109,15 +109,24 @@ def _require(condition: bool, message: str) -> None:
 
 
 def drive_series(payload: dict) -> dict[str, list]:
-    """Normalise both forms of `drive` to `{sensor: [values]}`.
+    """Normalise every form of `drive` to `{entity: [values]}`.
 
-    One reader for both spellings, so the sugar cannot come to mean something
+    One reader for all spellings, so the sugar cannot come to mean something
     slightly different from the general form.
+
+    `entity`/`entities` is the backend protocol's vocabulary; `sensor`/`sensors`
+    is what every scenario written before it says. Both are read, and no format
+    bump goes with the addition: the test for that is whether an OLDER reader
+    would SILENTLY IGNORE the new key, and it would not -- it validates the
+    action payload and refuses `entity` by name. A loud refusal is a reader
+    correctly declining a file it does not understand, which is what the format
+    version already means.
     """
-    if "sensors" in payload:
-        return {str(name): list(values)
-                for name, values in payload["sensors"].items()}
-    return {str(payload["sensor"]): list(payload["values"])}
+    plural = payload.get("entities") or payload.get("sensors")
+    if plural:
+        return {str(name): list(values) for name, values in plural.items()}
+    name = payload.get("entity", payload.get("sensor"))
+    return {str(name): list(payload["values"])}
 
 
 def _parse_expect(raw: Any, where: str) -> tuple[Expectation | None, FirmwareExpectation | None]:
@@ -150,7 +159,10 @@ def _parse_expect(raw: Any, where: str) -> tuple[Expectation | None, FirmwareExp
                  f"{where}: expect.audit sets nothing, so it would assert nothing "
                  f"while looking like an assertion")
 
-    firmware = raw.get("firmware")
+    # `substrate` is the general spelling; `firmware` is what shipped scenarios
+    # say. An older reader given `substrate` refuses it by name below, so this
+    # addition has no silent-drop path and needs no format bump.
+    firmware = raw.get("substrate", raw.get("firmware"))
     firmware_expectation = None
     if firmware is not None:
         _require(isinstance(firmware, dict), f"{where}: expect.firmware must be a mapping")
@@ -164,7 +176,7 @@ def _parse_expect(raw: Any, where: str) -> tuple[Expectation | None, FirmwareExp
                      f"expected absent, disabled or reading")
         firmware_expectation = FirmwareExpectation(states=states, within_walks=within)
 
-    unknown = set(raw) - {"audit", "firmware"}
+    unknown = set(raw) - {"audit", "firmware", "substrate"}
     _require(not unknown, f"{where}: expect has unknown key(s) {sorted(unknown)}")
     _require(expectation is not None or firmware_expectation is not None,
              f"{where}: expect is present and empty")
@@ -196,23 +208,27 @@ def _parse_action(raw: Any, where: str) -> tuple[str, Any] | None:
         # a moved verdict could not then be attributed. The specification this was
         # built from says that if the harness cannot express the experiment that
         # already exists, the DSL is wrong. It could not, so this is the fix.
-        if "sensors" in payload:
-            _require(isinstance(payload["sensors"], dict) and payload["sensors"],
-                     f"{where}: drive.sensors must be a non-empty mapping of "
-                     f"sensor to values")
-            for sensor, values in payload["sensors"].items():
+        key = "entities" if "entities" in payload else (
+              "sensors" if "sensors" in payload else None)
+        if key is not None:
+            _require(isinstance(payload[key], dict) and payload[key],
+                     f"{where}: drive.{key} must be a non-empty mapping of "
+                     f"entity to values")
+            for entity, values in payload[key].items():
                 _require(isinstance(values, list) and values,
-                         f"{where}: drive.sensors.{sensor} must be a non-empty list")
+                         f"{where}: drive.{key}.{entity} must be a non-empty list")
         else:
-            _require(isinstance(payload, dict) and "sensor" in payload
+            _require(isinstance(payload, dict)
+                     and ("entity" in payload or "sensor" in payload)
                      and "values" in payload,
-                     f"{where}: drive needs either sensors: {{name: [...]}} or a "
-                     f"single sensor and values")
+                     f"{where}: drive needs either entities: {{name: [...]}} or a "
+                     f"single entity and values")
             _require(isinstance(payload["values"], list) and payload["values"],
                      f"{where}: drive.values must be a non-empty list")
     if verb == "drift":
-        _require(isinstance(payload, dict) and "sensor" in payload and "to" in payload,
-                 f"{where}: drift needs a sensor and a value to move it to")
+        _require(isinstance(payload, dict)
+                 and ("entity" in payload or "sensor" in payload) and "to" in payload,
+                 f"{where}: drift needs an entity and a value to move it to")
     if verb == "fail":
         _require(isinstance(payload, dict) and "path" in payload and "status" in payload,
                  f"{where}: fail needs a path and an HTTP status")

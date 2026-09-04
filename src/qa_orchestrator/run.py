@@ -107,13 +107,15 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
                 elif verb == "fail":
                     backend.fail(str(payload["path"]), int(payload["status"]))
                 elif verb == "drift":
-                    backend.set_reading(str(payload["sensor"]), float(payload["to"]))
+                    # Either spelling; `scenario.py` has already required one.
+                    moved = payload.get("entity", payload.get("sensor"))
+                    backend.set_reading(str(moved), float(payload["to"]))
                 elif verb == "drive":
                     driven = drive_series(payload)
 
             for index in range(phase.walks):
-                for sensor, values in driven.items():
-                    backend.set_reading(sensor, float(values[index]))
+                for entity, values in driven.items():
+                    backend.set_reading(entity, float(values[index]))
                 # Re-read the URL each time: an injection rebuilds the server, so
                 # the port moves. Capturing against a stale URL would fail in a
                 # way that reads like an unreachable BMC.
@@ -132,8 +134,8 @@ def run(scenario: Scenario, *, workdir: Path | None = None,
 
             observed: dict[str, str] = {}
             if phase.expect_firmware is not None:
-                for sensor in phase.expect_firmware.states:
-                    observed[sensor] = backend.state(sensor)
+                for entity in phase.expect_firmware.states:
+                    observed[entity] = backend.state(entity)
 
             verdict = None
             mismatches: list[Mismatch] = []

@@ -100,7 +100,10 @@ class QemuBackend:
     def __init__(self, machine: dict) -> None:
         self.target = machine.get("target")
         self.qmp_address = machine.get("qmp")
-        self.paths: dict[str, dict] = machine.get("sensor_paths") or {}
+        # Both spellings, for the same reason mock.py takes both: published
+        # scenarios say `sensor_paths`.
+        self.paths: dict[str, dict] = (machine.get("entity_paths")
+                                       or machine.get("sensor_paths") or {})
         if not self.target or not self.qmp_address:
             raise BackendUnavailable(
                 "the qemu backend needs machine.target (the Redfish base URL of "
@@ -122,7 +125,7 @@ class QemuBackend:
             self._client.close()
             self._client = None
 
-    def set_reading(self, sensor: str, value: float) -> None:
+    def set_reading(self, entity: str, value: float) -> None:
         """Drive a sensor by setting the device property behind it.
 
         The mapping from sensor name to QOM path and property is scenario data,
@@ -130,11 +133,11 @@ class QemuBackend:
         property of the machine model, and guessing it would drive the wrong
         register and report the result as a firmware fact.
         """
-        mapping = self.paths.get(sensor)
+        mapping = self.paths.get(entity)
         if not mapping:
             raise BackendUnavailable(
-                f"no QOM path for {sensor!r}. Add it to machine.sensor_paths as "
-                f"{{{sensor}: {{path: /machine/..., property: temperature0, "
+                f"no QOM path for {entity!r}. Add it to machine.entity_paths as "
+                f"{{{entity}: {{path: /machine/..., property: temperature0, "
                 f"scale: 1000}}}} -- which device backs which sensor cannot be "
                 f"derived here, and a guess would drive the wrong register.")
         scale = mapping.get("scale", 1)
@@ -149,10 +152,10 @@ class QemuBackend:
             f"Redfish tree. Run that phase on the mock tier, or model it as a "
             f"reading driven out of range.")
 
-    def remove(self, sensor: str) -> None:
+    def remove(self, entity: str) -> None:
         self._unsupported("remove")
 
-    def disable(self, sensor: str) -> None:
+    def disable(self, entity: str) -> None:
         self._unsupported("disable")
 
     def fail(self, path: str, status: int) -> None:
@@ -160,7 +163,7 @@ class QemuBackend:
             "the qemu tier cannot make a subtree return an HTTP status; that is a "
             "property of the webserver, not the machine. Run that phase on mock.")
 
-    def state(self, sensor: str) -> str:
+    def state(self, entity: str) -> str:
         raise BackendUnavailable(
             "the qemu tier cannot report a sensor's state without walking it, and "
             "walking is the referee's job. Use expect.audit rather than "

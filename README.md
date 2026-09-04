@@ -123,6 +123,53 @@ provisioning — is real work that is not done here, and claiming it would be wo
 than not having it. The QMP conversation is tested against a fake socket, so the
 greeting, handshake, framing and error path are covered; no real QEMU has run it.
 
+## A fourth tier is yours to add
+
+The three tiers above are all hardware, and for a while the protocol was too: its
+verbs took a `sensor`, and `build()` knew three names and no more. Neither is a
+branch on a domain, so no gate catches either — one is a parameter name, the other
+a closed list of constructors. The effect was a harness whose architecture is
+domain-free and whose only door led to a BMC.
+
+The protocol is about **presence and value**, and neither is a hardware idea. An
+**entity** is whatever the tool under test enumerates and reports on: a sensor, a
+requirement in a proposal, a ledger account, an open matter.
+
+```python
+from qa_orchestrator.backends import register
+
+class LedgerBackend:
+    name = "ledger"
+    def __init__(self, machine): ...
+    def start(self):  return "postgres://..."   # the handle the referee reads
+    def stop(self):   ...
+    def remove(self, entity):            ...    # gone entirely
+    def disable(self, entity):           ...    # declared, no longer reporting
+    def fail(self, path, status):        ...    # a region refuses, for a partial read
+    def set_reading(self, entity, value):...
+    def state(self, entity):             ...    # absent | disabled | reading
+
+register("ledger", LedgerBackend)                # then `backend: ledger` in a scenario
+```
+
+`state()` returns one of three values, exported as `PRESENCE`. They are not
+hardware states: they are the three ways a thing that *should* be there can
+actually be — gone, there but not reporting, there and reporting. A boolean would
+collapse the middle one, and the middle one is where the interesting faults live: a
+sensor switched off at the factory, a requirement present but unanswerable, an
+account that exists and has stopped settling.
+
+`register()` refuses to shadow a built-in tier, because silently replacing `mock`
+would make a run report a tier it did not use.
+
+**Both vocabularies are read.** `entities:`/`entity:` and `sensors:`/`sensor:` mean
+the same thing in a scenario, as do `expect.substrate` and `expect.firmware`. The
+scenario format stays `qa-scenario/1`: the test for a format bump is whether an
+older reader would *silently ignore* a new key, and it would not — it validates the
+action payload and refuses the new spellings by name. A loud refusal is a reader
+correctly declining a file it does not understand, which is what the version
+already means.
+
 ## Exit codes
 
 The same three-valued contract the audit tool uses, because this sits in the same
