@@ -23,9 +23,12 @@ The last line grades a proposal's requirements with a checker that has never see
 positional arguments where the first vertical's tool takes flags, `issues` where it
 keeps `findings`, and a report of what it did **not** check, which the scenario asserts on.
 
-**Not yet released.** The 0.3 domain-free rewrite, tagged `v0.3.0` when it goes.
-Apache-2.0. The published series is 0.2.x, and a `qa-scenario/1` file
-written for it still reads here.
+**Released — 0.3.0**, tagged `v0.3.0`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.3.0 is the domain-free rewrite.** Tiers, verbs, referees and report shapes come
+from registries and the core names none of them; the BMC tool, its tiers and its
+scenarios are a vertical loaded through an entry point, like any other would be. A
+`qa-scenario/1` file written for 0.2.x still reads and still runs.
 
 Exit codes are the referee's own three: `0` every expectation held, `1` a verdict
 disagreed, `2` the run could not be completed. `2` never reads as clean.
