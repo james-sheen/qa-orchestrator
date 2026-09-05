@@ -7,34 +7,13 @@ which tiers exist, which verbs exist, which referee, what its report looks like,
 a `qa-scenario/1` file meant — reaches the core through a registry, and nothing in the
 core knows the answer in advance.
 
-## Status, stated plainly
-
-- Written from a static reading of `james-sheen/qa-orchestrator` at `d136ca7` (commit B),
-  the two diffs, and the upstream `arbiter` `BRIDGES.md` (the "engine litmus": the engine
-  decides nothing by asking which domain it is in, checked structurally).
-- **The suite has since been run**, on 2026-09-05, when this tree was migrated into the
-  repository. It passed 68 of 68 on the first attempt. Three things it did not cover
-  came out of that migration and are fixed here: the module scan located the package by
-  a hardcoded relative path, so moving the tree under `src/` made two of its three
-  domain-free assertions pass by reading an empty directory; the example referee's
-  executable bit does not survive every way a tree is distributed, and the suite could
-  not see it because its fixture sets the bit on a copy; and there was no negative
-  control, so nothing here could have failed if the harness had broken into always
-  reporting success.
-- **Migration step 1 below named a symbol that does not exist.** It said to import
-  `BackendUnavailable` from `vocabulary`; the exception is `SubstrateUnavailable`.
-  Corrected in place.
-- **Not carried over**: the three hardware tiers (`mock`, `qemu`, `testbed` — they move,
-  see *Migration*), the CI workflow, the hygiene and commit-message tools, and the 0.2.x
-  README prose. Nothing here needs `bmc-sensor-audit` to be installed.
-
 ## What was locking the harness to one domain, and where each lock went
 
-| # | Lock, as of `d136ca7` | Where it lived | 0.3 |
+| # | Lock, in 0.2.x | Where it lived | 0.3 |
 |---|---|---|---|
 | 1 | Five verbs as literals, dispatched by `if/elif`; no way to add one | `scenario.ACTIONS`, `run.py` | `actions.Verb` + `register_verb()`. The built-in five are defined the same way. A verb validates its payload at parse time with the phase named, and does its work at run time. |
 | 2 | Every value coerced with `float()` at the harness layer | `run.py` | Values pass through untouched. What a value *is* belongs to the tier. The paper example's values are sentences. |
-| 3 | Referee identity, argv, report schema, `sha256:` handle shape as literals | `referee.py` | `referee.Tool` (commit B's idea, completed). **No built-in referee in the core**: `bmc-sensor-audit` is a vertical (`verticals/bmc.py`) registered through an entry point, like any outside vertical. |
+| 3 | Referee identity, argv, report schema, `sha256:` handle shape as literals | `referee.py` | `referee.Tool`. **No built-in referee in the core**: `bmc-sensor-audit` is a vertical (`verticals/bmc.py`) registered through an entry point, like any outside vertical. |
 | 4 | A `qa-scenario/1` file with no `referee:` meant one program, by name, in the parser | `scenario.py` | `referee.set_legacy_default()` — a slot the vertical fills when it registers. The core carries no name. A v1 file without the vertical loaded is refused by name. |
 | 5 | `names`/`not_names` judged by scraping prose in the shape of one tool's stanza; the profile's `findings_key`/`subject_keys` read by nothing on the run path | `compare.py`, `referee.names_mentioned` | The comparator judges from the JSON report through `ReportSchema`. Prose is read **only** when the profile declares no JSON form for the mode, and every such mismatch is tagged `(stdout; this referee prints no JSON for this mode)`. |
 | 6 | Nothing could assert on what the referee *did not* check, or on how many evaluations it attempted — the two halves of an arbiter envelope | expectation vocabulary | `expect.referee.declines` and `expect.referee.checked`, read through `ReportSchema.declines` / `.checked`. Refused at parse time when the profile declares no such field or the mode has no JSON. |
@@ -69,7 +48,7 @@ src/qa_orchestrator/          (the tree is a `src/` layout, so an import cannot
   substrates/memory.py   the one built-in tier
   verticals/bmc.py       the first vertical, as a plugin: its Tool, its v1-default claim, its tiers' hook
 examples/paper/        a vertical sharing no vocabulary with the first: tier + verb + referee + scenario
-tests/                 run 2026-09-05; see Status
+tests/                 the suite
 ```
 
 Three registries, one shape each: `register` refuses a taken name, `unregister` is the
@@ -186,40 +165,39 @@ add its own verbs against the same records — `examples/paper/vertical.py` adds
    harness that broke into always passing sails through every scenario that is expected
    to pass.
 
-## Migrating the 0.2.x repository
+## What changed from 0.2.x
 
-1. Move `src/qa_orchestrator/backends/{mock,qemu,testbed}.py` to
-   `qa_orchestrator/verticals/bmc_tiers.py` (or a package of that name) and expose
-   `TIERS = {"mock": MockBackend, "qemu": QemuBackend, "testbed": TestbedBackend}`.
-   Change `from . import BackendUnavailable` to `from ..vocabulary import
-   SubstrateUnavailable` -- the exception was renamed with the module, and an earlier
-   draft of this line named the old one.
-   The tiers' `set_reading` needs no rename: `substrate.set_value()` calls it when
-   `set_value` is absent. `fail(path, status)` is called positionally, so its parameter
-   names can stay. `verticals/bmc.py::register()` picks the module up when it exists and
-   says in its summary when it does not.
-2. `tests/test_boundary.py`: the *referee.py does not import the referee* and *compare.py
-   does not either* checks stand; the *only the mock backend may import the tool* check
-   moves to the vertical (`verticals/bmc_tiers.py` is now the only place the import is
-   correct).
-3. `tests/test_capture.py`: `executable` takes a required `tool`; pass
-   `verticals.bmc.BMC_SENSOR_AUDIT` to `capture`/`judge`. The three-question tests are
-   otherwise unchanged in intent.
-4. `tests/test_entity_vocabulary.py` and `tests/test_referee_profile.py` are superseded by
-   `tests/test_paper_vertical.py` and `tests/test_scenario_compat.py`; keep any case not
-   covered (the QMP framing tests belong with the tiers).
-5. CI: `pip install -e '.[bmc,dev]'`; `qa-orchestrator check src/qa_orchestrator/verticals/bmc_scenarios/` works because the
-   entry point loads the vertical -- the scenarios moved in with the tiers, so they are
-   the vertical's and reach the wheel with it; add
-   `PATH=examples/paper/bin:$PATH qa-orchestrator --plugin examples/paper/vertical.py run examples/paper/withdrawn.yaml`
-   and its wrong-on-purpose twin; keep the `testbed` refusal step, calling
-   `substrate.build("testbed", {})` after loading the plugin.
-6. `pyproject.toml`: extra `[referee]` becomes `[bmc]`; version `0.3.0`; the scenario
-   format bumps to `/2` because a v1 reader given a v2 file would refuse it by name (the
-   test the 0.2.x README states), and this time the vocabulary moved, not only grew.
-7. README: the "three tiers" table becomes the vertical's; "A fourth tier is yours to add"
-   and "And the program that grades it is yours too" collapse into *Writing a vertical*
-   above; the exit-code section stands.
+For anyone with their own tier, scenario or code written against the 0.2.x API. A
+`qa-scenario/1` file needs no change at all; Python callers need the renames below.
+
+**There is no built-in referee.** `bmc-sensor-audit` is a vertical, registered
+through the `qa_orchestrator.plugins` entry point. A v1 file naming no referee
+means whichever loaded vertical claimed the v1 default, and with none loaded it is
+refused by name rather than guessed at.
+
+| 0.2.x | 0.3 |
+|---|---|
+| `qa_orchestrator.backends` | `qa_orchestrator.substrate` |
+| `backends.build(name, machine)` | `substrate.build(name, setup)` |
+| `backends.BackendUnavailable` | `vocabulary.SubstrateUnavailable` -- the old name is kept there as an alias, so only its home moved |
+| `referee.executable()` / `capture` / `judge` | the same, each taking a required `tool=` profile |
+| `referee.validate_walk(path)` | `referee.validate(path, tool=...)` |
+| `compare_audit` / `compare_firmware` | `compare_referee` / `compare_substrate` |
+| `Expectation` / `FirmwareExpectation` | `RefereeExpectation` (with `FindingsExpectation`) / `SubstrateExpectation` |
+| `RunResult.walks_taken` | `RunResult.captures_taken` |
+| `scenario.drive_series` | folded into the `drive` verb; it normalises every spelling |
+| extra `[referee]` | extra `[bmc]` |
+
+**A tier written for 0.2.x still works.** `set_reading` is called when `set_value`
+is absent, so the rename costs nothing; `fail(path, status)` is called
+positionally, so its parameter names can stay. What a tier must now do is answer
+`state()` inside `PRESENCE` -- `substrate.observe()` refuses anything else and ends
+the run as could-not-complete naming the tier, rather than letting it read as an
+injection that did not take.
+
+`Capture` gained `validated` and `digest_missing`: a profile that declares no
+handle shape and a tool that declared one and printed nothing are different facts,
+and the evidence block says which.
 
 ## What still does not generalise
 

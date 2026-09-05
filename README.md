@@ -34,7 +34,7 @@ Exit codes are the referee's own three: `0` every expectation held, `1` a verdic
 disagreed, `2` the run could not be completed. `2` never reads as clean.
 
 [`DESIGN.md`](DESIGN.md) says what was locking the harness to one domain, where each lock
-went, the contract a vertical must meet, the scenario format, and how to migrate the
-0.2.x repository.
+went, the contract a vertical must meet, the scenario format, how to write a vertical, and
+what changed from 0.2.x for anyone with code written against it.
 
 Apache-2.0.
