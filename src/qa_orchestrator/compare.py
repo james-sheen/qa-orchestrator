@@ -1,20 +1,24 @@
-"""Did the referee conclude what the scenario said it should?
+"""Decide whether a verdict was the right one. Pure functions, no subprocess.
 
-Pure functions over a verdict and an expectation. No I/O, no subprocess, nothing
-that needs a machine -- so the comparison logic is testable without any of the
-apparatus, which is the half of a harness that usually cannot be tested at all.
+Everything here takes what the referee said and what the scenario expected, and
+returns mismatches. Nothing here needs a substrate or a referee, so the
+comparison logic is testable without either -- and the comparison logic is what
+decides whether the referee regressed or the harness did.
 
-**Every mismatch is reported, not the first.** Someone reading a failed scenario is
-deciding whether the firmware regressed or the harness did, and revealing one
-difference at a time costs a run each.
+**The report is the evidence, when there is one.** `names` and `not_names` are
+judged against the findings in the JSON report, read through the profile's
+`ReportSchema`. Only when the profile declares no JSON form for the mode is the
+prose read instead, and every mismatch produced that way says `(stdout)` -- so a
+reader knows the judgement rests on wording that may be reworded.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .referee import VERDICTS, Verdict
-from .scenario import Expectation, FirmwareExpectation, Phase
+from .referee import Verdict, first_present
+from .scenario import (CheckedExpectation, DeclinesExpectation, FindingsExpectation,
+                       Phase, RefereeExpectation, SubstrateExpectation)
 
 
 @dataclass(frozen=True)
@@ -27,71 +31,54 @@ class Mismatch:
         return f"{self.where}: expected {self.expected}, got {self.actual}"
 
 
-def compare_audit(expected: Expectation, verdict: Verdict) -> list[Mismatch]:
-    """What the referee should have said, against what it said."""
+def _word(code: int) -> str:
+    return {0: "clean", 1: "regressions", 2: "incomplete"}.get(code, "unrecognised")
+
+
+# -- findings, from the report -------------------------------------------------
+
+def _findings_from_report(expected: FindingsExpectation, verdict: Verdict) -> list[Mismatch]:
     found: list[Mismatch] = []
-
-    if expected.exit_code is not None and verdict.exit_code != expected.exit_code:
-        found.append(Mismatch(
-            "exit code",
-            f"{expected.exit_code} ({_word(expected.exit_code)})",
-            f"{verdict.exit_code} ({verdict.verdict})"))
-
-    if expected.finding and expected.finding not in verdict.stdout:
-        found.append(Mismatch(
-            "finding", f"the report to contain {expected.finding!r}",
-            "it did not"))
-
-    # Names are matched against the lines carrying the finding, not against the
-    # whole report.
-    #
-    # This started as a substring test over all of stdout and was wrong: every
-    # declared sensor is listed in the coverage table above the findings, so
-    # `names: [Inlet]` passed whether or not the engine had said anything about
-    # Inlet. It asserted that a sensor exists, which was never in doubt.
-    lines = _relevant_lines(verdict.stdout, expected.finding)
+    schema = verdict.schema
+    findings = verdict.findings()
+    if expected.text is not None:
+        relevant = [f for f in findings
+                    if any(expected.text in str(f.get(k, "")) for k in schema.text)]
+        if not relevant:
+            found.append(Mismatch(
+                "finding", f"a finding whose text contains {expected.text!r}",
+                f"none among {len(findings)} finding(s) in the report"))
+    else:
+        relevant = findings
+    subjects = {first_present(f, schema.subject) for f in relevant} - {None}
+    scope = "the finding carrying that text" if expected.text else "the report's findings"
     for name in expected.names:
-        if not any(name in line for line in lines):
-            found.append(Mismatch(
-                f"named sensor {name!r}",
-                "to appear in the finding" if expected.finding else "to be named",
-                "it did not"))
+        if name not in subjects:
+            found.append(Mismatch(f"named subject {name!r}", f"to appear in {scope}",
+                                  f"it did not ({', '.join(sorted(subjects)) or 'nothing named'})"))
     for name in expected.not_names:
-        offending = [line for line in lines if name in line]
-        if offending:
-            found.append(Mismatch(
-                f"unnamed sensor {name!r}", "not to appear in the finding",
-                offending[0].strip()[:110]))
+        if name in subjects:
+            found.append(Mismatch(f"unnamed subject {name!r}", f"not to appear in {scope}",
+                                  "it did"))
     return found
 
 
-def _relevant_lines(stdout: str, finding: str | None) -> list[str]:
+# -- findings, from prose (only when the profile has no JSON for this mode) ----
+
+def _relevant_lines(stdout: str, text: str | None) -> list[str]:
     """The lines a name assertion is judged against: the finding's own block.
 
-    With a `finding`, the region is each line carrying it **plus the header that
-    owns it** -- the nearest less-indented line above. Without one, the whole
-    report, which is the weaker claim and is what a scenario asked for by not
-    narrowing it.
-
-    The header matters because the tool reports coverage as a stanza:
-
-        Fan1
-            declared by AspeedFan in the configuration and not reported ...
-            declared in configs/board.json
-
-    The sensor's name is on the header line and the finding text is on the next,
-    so a match confined to the finding line alone found no names at all -- and a
-    `names:` assertion that could never hold is as useless as one that always
-    does. Walking back stops at the nearest shallower line, so the block belongs
-    to one sensor and a `not_names` check cannot be tripped by its neighbour.
+    With a `text`, the region is each line carrying it PLUS the header that owns
+    it -- the nearest less-indented line above -- because a tool that reports as
+    a stanza puts the subject on the header and the wording beneath. Without
+    one, the whole output, which is the weaker claim.
     """
-    if not finding:
+    if not text:
         return stdout.splitlines()
-
     lines = stdout.splitlines()
     kept: list[str] = []
     for index, line in enumerate(lines):
-        if finding not in line:
+        if text not in line:
             continue
         indent = len(line) - len(line.lstrip())
         start = index
@@ -106,34 +93,107 @@ def _relevant_lines(stdout: str, finding: str | None) -> list[str]:
     return kept
 
 
-def compare_firmware(expected: FirmwareExpectation,
-                     observed: dict[str, str]) -> list[Mismatch]:
-    """What the MACHINE should look like, against what it looks like.
-
-    Separate from the audit comparison so a scenario can tell a broken injector
-    from a broken referee. If the fan is still there, the tool was right not to
-    report it missing, and the harness is the thing at fault.
-    """
+def _findings_from_prose(expected: FindingsExpectation, verdict: Verdict) -> list[Mismatch]:
     found: list[Mismatch] = []
-    for sensor, want in sorted(expected.states.items()):
-        got = observed.get(sensor, "unknown")
-        if got != want:
-            found.append(Mismatch(f"machine state of {sensor}", want, got))
+    tag = "(stdout; this referee prints no JSON for this mode)"
+    if expected.text is not None and expected.text not in verdict.stdout:
+        found.append(Mismatch(f"finding {tag}", f"the output to contain {expected.text!r}",
+                              "it did not"))
+    lines = _relevant_lines(verdict.stdout, expected.text)
+    for name in expected.names:
+        if not any(name in line for line in lines):
+            found.append(Mismatch(f"named subject {name!r} {tag}",
+                                  "to appear in the finding" if expected.text else "to be named",
+                                  "it did not"))
+    for name in expected.not_names:
+        offending = [line for line in lines if name in line]
+        if offending:
+            found.append(Mismatch(f"unnamed subject {name!r} {tag}",
+                                  "not to appear in the finding", offending[0].strip()[:110]))
     return found
 
 
-def _word(code: int) -> str:
-    """The one vocabulary, read from where the verdicts are defined.
+# -- declines and the denominator ----------------------------------------------
 
-    This was a second private mapping, and it had already drifted: it called
-    exit 2 *could not complete* while `Verdict.verdict` called it *incomplete*,
-    so a single mismatch line printed both names for the same number. Written
-    twice, disagreeing immediately -- which is why it is read from one place now.
+def _declines(expected: DeclinesExpectation, verdict: Verdict) -> list[Mismatch]:
+    if verdict.report is None:
+        return [Mismatch("declines", "a JSON report to read them from",
+                         "the referee printed none this run")]
+    schema = verdict.schema
+    declines = verdict.declines()
+    if expected.reason is not None:
+        relevant = [d for d in declines
+                    if first_present(d, schema.decline_reason) == expected.reason]
+        if not relevant:
+            reasons = sorted({first_present(d, schema.decline_reason) or "?" for d in declines})
+            return [Mismatch("declines", f"a decline with reason {expected.reason!r}",
+                             f"none; reasons reported: {', '.join(reasons) or '(no declines)'}")]
+    else:
+        relevant = declines
+    subjects = {first_present(d, schema.decline_subject) for d in relevant} - {None}
+    found: list[Mismatch] = []
+    for name in expected.names:
+        if name not in subjects:
+            found.append(Mismatch(f"declined subject {name!r}", "to be among the declines",
+                                  f"it was not ({', '.join(sorted(subjects)) or 'none'})"))
+    for name in expected.not_names:
+        if name in subjects:
+            found.append(Mismatch(f"undeclined subject {name!r}",
+                                  "not to be among the declines", "it was"))
+    return found
+
+
+def _checked(expected: CheckedExpectation, verdict: Verdict) -> list[Mismatch]:
+    got = verdict.checked()
+    if got is None:
+        return [Mismatch("checked", "the report to carry a denominator",
+                         "it did not (or the referee printed no JSON)")]
+    found: list[Mismatch] = []
+    if expected.exact is not None and got != expected.exact:
+        found.append(Mismatch("checked", f"exactly {expected.exact}", str(got)))
+    if expected.at_least is not None and got < expected.at_least:
+        found.append(Mismatch("checked", f"at least {expected.at_least}", str(got)))
+    return found
+
+
+# -- the two comparisons -------------------------------------------------------
+
+def compare_referee(expected: RefereeExpectation, verdict: Verdict) -> list[Mismatch]:
+    """What the referee should have said, against what it said."""
+    found: list[Mismatch] = []
+    if expected.exit_code is not None and verdict.exit_code != expected.exit_code:
+        found.append(Mismatch("exit code",
+                              f"{expected.exit_code} ({_word(expected.exit_code)})",
+                              f"{verdict.exit_code} ({verdict.verdict})"))
+    if expected.findings is not None:
+        if verdict.report is not None:
+            found += _findings_from_report(expected.findings, verdict)
+        else:
+            found += _findings_from_prose(expected.findings, verdict)
+    if expected.declines is not None:
+        found += _declines(expected.declines, verdict)
+    if expected.checked is not None:
+        found += _checked(expected.checked, verdict)
+    return found
+
+
+def compare_substrate(expected: SubstrateExpectation,
+                      observed: dict[str, str]) -> list[Mismatch]:
+    """What the SUBSTRATE should look like, against what it looks like.
+
+    Separate from the referee comparison so a scenario can tell a broken
+    injector from a broken referee. If the entity is still there, the referee
+    was right not to report it missing, and the harness is the thing at fault.
     """
-    return VERDICTS.get(code, "unknown")
+    found: list[Mismatch] = []
+    for entity, want in sorted(expected.states.items()):
+        got = observed.get(entity, "unobserved")
+        if got != want:
+            found.append(Mismatch(f"substrate state of {entity}", want, got))
+    return found
 
 
-@dataclass(frozen=True)
+@dataclass
 class PhaseResult:
     phase: Phase
     verdict: Verdict | None
@@ -146,11 +206,4 @@ class PhaseResult:
 
     @property
     def asserted_anything(self) -> bool:
-        """Whether this phase made a claim at all.
-
-        A scenario of phases that assert nothing runs, reports success, and tests
-        nothing. The runner counts these so a summary can say how much of the run
-        was actually a check -- a green result over zero assertions is the shape
-        this family exists to refuse.
-        """
-        return self.phase.expect is not None or self.phase.expect_firmware is not None
+        return self.phase.asserts_anything

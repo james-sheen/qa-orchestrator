@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import socket
 
-from . import BackendUnavailable
+from ...vocabulary import SubstrateUnavailable
 
 
 class QmpError(RuntimeError):
@@ -105,7 +105,7 @@ class QemuBackend:
         self.paths: dict[str, dict] = (machine.get("entity_paths")
                                        or machine.get("sensor_paths") or {})
         if not self.target or not self.qmp_address:
-            raise BackendUnavailable(
+            raise SubstrateUnavailable(
                 "the qemu backend needs machine.target (the Redfish base URL of "
                 "the running instance) and machine.qmp (its QMP socket path or "
                 "host:port).\n\n"
@@ -135,7 +135,7 @@ class QemuBackend:
         """
         mapping = self.paths.get(entity)
         if not mapping:
-            raise BackendUnavailable(
+            raise SubstrateUnavailable(
                 f"no QOM path for {entity!r}. Add it to machine.entity_paths as "
                 f"{{{entity}: {{path: /machine/..., property: temperature0, "
                 f"scale: 1000}}}} -- which device backs which sensor cannot be "
@@ -146,7 +146,7 @@ class QemuBackend:
                              value=int(float(value) * scale))
 
     def _unsupported(self, verb: str) -> None:
-        raise BackendUnavailable(
+        raise SubstrateUnavailable(
             f"the qemu tier cannot {verb} a sensor: the firmware decides what it "
             f"exposes, and there is no monitor command that removes one from the "
             f"Redfish tree. Run that phase on the mock tier, or model it as a "
@@ -159,12 +159,12 @@ class QemuBackend:
         self._unsupported("disable")
 
     def fail(self, path: str, status: int) -> None:
-        raise BackendUnavailable(
+        raise SubstrateUnavailable(
             "the qemu tier cannot make a subtree return an HTTP status; that is a "
             "property of the webserver, not the machine. Run that phase on mock.")
 
     def state(self, entity: str) -> str:
-        raise BackendUnavailable(
+        raise SubstrateUnavailable(
             "the qemu tier cannot report a sensor's state without walking it, and "
             "walking is the referee's job. Use expect.audit rather than "
             "expect.firmware on this tier.")

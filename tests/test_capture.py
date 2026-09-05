@@ -26,6 +26,7 @@ faking cannot drift from what the tool actually prints.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -35,6 +36,7 @@ from pathlib import Path
 import pytest
 
 from qa_orchestrator import referee
+from qa_orchestrator.verticals.bmc import BMC_SENSOR_AUDIT as TOOL
 
 WALK = {"format": "bmc-sensor-audit/walk/1", "sensors":
         [{"name": "Inlet", "reading": 21.0}], "errors": []}
@@ -88,7 +90,7 @@ class TestAPartialWalkIsEvidence:
         stopped at the phase that induced the fault -- so the referee was never
         asked the question the scenario exists to ask."""
         faked(_Fake(capture_rc=2, writes=PARTIAL))
-        taken = referee.capture("http://bmc", tmp_path / "w.json")
+        taken = referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL)
         assert taken.path.exists()
         assert taken.complete is False
 
@@ -96,14 +98,14 @@ class TestAPartialWalkIsEvidence:
         """Non-vacuity: `complete` discriminates rather than always reporting the
         interesting case."""
         faked(_Fake(capture_rc=0, writes=WALK))
-        assert referee.capture("http://bmc", tmp_path / "w.json").complete is True
+        assert referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL).complete is True
 
     def test_the_walk_is_validated_rather_than_inferred_from_the_exit_code(
             self, faked, tmp_path):
         """The artifact is judged by the tool that owns the format, not by this
         program deciding what an exit code probably meant."""
         fake = faked(_Fake(capture_rc=2, writes=PARTIAL))
-        referee.capture("http://bmc", tmp_path / "w.json")
+        referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL)
         assert [c[1] for c in fake.calls] == ["capture", "validate-walk"]
 
 
@@ -112,8 +114,10 @@ class TestACaptureThatCannotBeJudgedStillRaises:
         """An unreachable machine produces no walk at all, and that is still a
         failed run rather than a partial one."""
         faked(_Fake(capture_rc=2, writes=None))
-        with pytest.raises(RuntimeError, match="wrote no walk"):
-            referee.capture("http://bmc", tmp_path / "w.json")
+        # `wrote no walk` in 0.2.x. A walk is the first vertical's word for a
+        # capture, and the message is the core's, so 0.3 says file.
+        with pytest.raises(RuntimeError, match="wrote no file"):
+            referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL)
 
     def test_a_file_the_validator_refuses_raises(self, faked, tmp_path):
         """A file exists and is not a walk. Treating that as a partial capture
@@ -121,7 +125,7 @@ class TestACaptureThatCannotBeJudgedStillRaises:
         faked(_Fake(capture_rc=2, validate_rc=1,
                     validate_err="sensors[0] carries no 'name'"))
         with pytest.raises(RuntimeError, match="validator refuses"):
-            referee.capture("http://bmc", tmp_path / "w.json")
+            referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL)
 
     def test_an_undocumented_exit_code_raises(self, faked, tmp_path):
         """`127` is command-not-found, not a partial walk. The same rule the
@@ -129,7 +133,7 @@ class TestACaptureThatCannotBeJudgedStillRaises:
         could-not-complete, with the raw code kept beside it."""
         faked(_Fake(capture_rc=127, writes=WALK))
         with pytest.raises(RuntimeError, match="127"):
-            referee.capture("http://bmc", tmp_path / "w.json")
+            referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL)
 
 
 class TestTheContentHandle:
@@ -138,20 +142,20 @@ class TestTheContentHandle:
         """Two definitions of one handle is how the two come to disagree. The
         publisher owns it; this reads what the publisher printed."""
         faked(_Fake(capture_out=f"wrote 1 sensor(s)\n  digest      {DIGEST}\n"))
-        assert referee.capture("http://bmc", tmp_path / "w.json").digest == DIGEST
+        assert referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL).digest == DIGEST
 
     def test_it_is_matched_by_SHAPE_not_by_the_label_beside_it(self, faked,
                                                               tmp_path):
         """A heading can be reworded; `sha256:` and sixty-four hex characters
         cannot become something else without the format changing."""
         faked(_Fake(capture_out=f"some other wording entirely: {DIGEST}"))
-        assert referee.capture("http://bmc", tmp_path / "w.json").digest == DIGEST
+        assert referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL).digest == DIGEST
 
     def test_an_absent_handle_is_none_rather_than_a_guess(self, faked, tmp_path):
         """A referee too old to print one, or a flag that stopped working. `None`
         says nothing was read; a computed stand-in would say something false."""
         faked(_Fake(capture_out="wrote 1 sensor(s) to w.json"))
-        assert referee.capture("http://bmc", tmp_path / "w.json").digest is None
+        assert referee.capture("http://bmc", tmp_path / "w.json", tool=TOOL).digest is None
 
 
 def _tool() -> str | None:
@@ -161,6 +165,11 @@ def _tool() -> str | None:
 @pytest.mark.skipif(_tool() is None,
                     reason="needs the referee on PATH; the branch tests above "
                            "fake it, these two must not")
+@pytest.mark.skipif(importlib.util.find_spec("bmc_sensor_audit") is None,
+                    reason="needs bmc_sensor_audit IMPORTABLE for its MockBMC, "
+                           "which is a different fact from its console script "
+                           "being on PATH -- an interpreter can have one and not "
+                           "the other, and this guard checked only the script")
 class TestAgainstTheRealTool:
     """The faking above is a claim about what the tool prints. These check it.
 
@@ -174,7 +183,7 @@ class TestAgainstTheRealTool:
         bmc = MockBMC(shape="sensors")
         bmc.add("Inlet", reading=21.0, upper_critical=80.0)
         with serve(bmc) as url:
-            return referee.capture(url, tmp_path / "real.json")
+            return referee.capture(url, tmp_path / "real.json", tool=TOOL)
 
     def test_the_handle_is_the_one_sha256sum_gives(self, tmp_path):
         """The property that makes it useful to a recipient: no tooling needed,
@@ -186,7 +195,7 @@ class TestAgainstTheRealTool:
     def test_a_real_capture_is_complete_and_validates(self, tmp_path):
         taken = self._walk(tmp_path)
         assert taken.complete is True
-        assert referee.validate_walk(taken.path) is None
+        assert referee.validate(taken.path, tool=TOOL) is None
 
     def test_the_validator_refuses_a_walk_this_test_breaks(self, tmp_path):
         """Non-vacuity for `validate_walk`: it has to be able to say no, or the
@@ -195,7 +204,7 @@ class TestAgainstTheRealTool:
         payload = json.loads(taken.path.read_text())
         del payload["sensors"][0]["name"]
         taken.path.write_text(json.dumps(payload))
-        assert "name" in (referee.validate_walk(taken.path) or "")
+        assert "name" in (referee.validate(taken.path, tool=TOOL) or "")
 
 
 class TestTheEvidenceOutlivesTheWorkdir:
@@ -206,27 +215,47 @@ class TestTheEvidenceOutlivesTheWorkdir:
         from qa_orchestrator.run import RunResult
 
         result = RunResult(
-            scenario=None, phases=[], walks_taken=2,
-            captures=(referee.Capture(Path("/gone/walk_001.json"), True, DIGEST),
-                      referee.Capture(Path("/gone/walk_002.json"), False, None)))
+            scenario=None, phases=[], captures_taken=2,
+            captures=(referee.Capture(Path("/gone/capture_001.json"), complete=True,
+                                      validated=True, digest=DIGEST),
+                      referee.Capture(Path("/gone/capture_002.json"), complete=False,
+                                      validated=True, digest=None,
+                                      digest_missing=True)))
         lines = result.evidence()
         assert DIGEST in lines[0] and "complete" in lines[0]
         assert "PARTIAL" in lines[1]
-        assert "no handle printed" in lines[1], (
-            "a walk whose handle was never read must say so rather than leave a "
-            "blank column that reads as one nobody bothered to record")
+        # 0.3 splits what 0.2.x said one way. A profile that declares no handle
+        # shape and a tool that declared one and printed nothing are different
+        # facts, and only the second is a fault worth reading twice.
+        assert "handle MISSING" in lines[1], (
+            "a capture whose handle was never read must say so rather than leave "
+            "a blank column that reads as one nobody bothered to record")
+
+    def test_a_profile_declaring_no_handle_says_that_instead(self):
+        """The other half of the same split, so neither wording can drift into
+        covering both cases."""
+        from qa_orchestrator.run import RunResult
+
+        result = RunResult(
+            scenario=None, phases=[], captures_taken=1,
+            captures=(referee.Capture(Path("/gone/c.json"), complete=True,
+                                      validated=False, digest=None),))
+        line = result.evidence()[0]
+        assert "no handle; the profile declares none" in line
+        assert "UNVALIDATED" in line
 
     def test_a_run_with_no_walks_has_nothing_to_say(self):
         from qa_orchestrator.run import RunResult
 
-        assert RunResult(scenario=None, phases=[], walks_taken=0).evidence() == []
+        assert RunResult(scenario=None, phases=[], captures_taken=0).evidence() == []
 
 
 class TestTheShippedScenarioExercisesTheAction:
     """A scenario nobody runs is a claim. This one exists because the action it
     uses was documented, unusable, and covered by nothing."""
 
-    SCENARIOS = Path(__file__).resolve().parents[1] / "scenarios"
+    SCENARIOS = (Path(__file__).resolve().parents[1] / "src" / "qa_orchestrator"
+                 / "verticals" / "bmc_scenarios")
 
     def test_a_shipped_scenario_uses_the_fail_action(self):
         yaml = pytest.importorskip("yaml", reason="scenarios are YAML")

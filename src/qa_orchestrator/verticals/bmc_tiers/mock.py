@@ -12,12 +12,12 @@ drifting apart.
 
 from __future__ import annotations
 
-from . import BackendUnavailable
+from ...vocabulary import SubstrateUnavailable
 
 try:
     from bmc_sensor_audit.testing.mock_redfish import MockBMC, MockSensor, serve
 except ImportError as error:                                     # pragma: no cover
-    raise BackendUnavailable(
+    raise SubstrateUnavailable(
         "the mock backend needs bmc-sensor-audit installed for its MockBMC: "
         "pip install 'bmc-sensor-audit[detect]'") from error
 
@@ -32,7 +32,7 @@ class MockBackend:
         # rename.
         entities = machine.get("entities") or machine.get("sensors") or []
         if not entities:
-            raise BackendUnavailable(
+            raise SubstrateUnavailable(
                 "the mock backend needs machine.entities (or machine.sensors) in "
                 "the scenario -- it has no firmware to read a list from, so the "
                 "scenario supplies it. An empty machine would make every declared "
@@ -103,7 +103,7 @@ class MockBackend:
             if candidate.name == entity:
                 return candidate
         known = ", ".join(sorted(s.name for s in self._bmc.sensors)) or "(none)"
-        raise BackendUnavailable(
+        raise SubstrateUnavailable(
             f"no entity named {entity!r} on this machine; it has: {known}")
 
     def _restart(self) -> None:

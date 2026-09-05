@@ -1,0 +1,53 @@
+# A proposal, graded by a program that has never seen a BMC.
+#
+# The referee is `proposal-review`, whose command line and report share nothing
+# with the first vertical's. Its findings are `issues`, its subjects are
+# `requirement`s, and it reports what it did NOT check -- so phase 3 asserts
+# on a decline and on the denominator, which no earlier scenario could.
+#
+# Values are sentences, not numbers. Nothing in the harness coerces them.
+
+format: qa-scenario/2
+name: a requirement withdrawn, one unanswered, one contradicted
+substrate: paper
+referee: proposal-review
+mode: review
+config: rules.json
+
+setup:
+  entities:
+    - {name: R-3.2, value: "the pump shall stop within 2 s of a level alarm"}
+    - {name: R-7.1, value: "the pump shall restart within 5 s of the alarm clearing"}
+    - {name: R-9.0, value: "manual restart shall be possible at any time"}
+
+phases:
+  - note: everything declared is present and answered
+    expect:
+      referee: {exit: 0, checked: 3}
+      substrate: {R-3.2: reading, R-7.1: reading, R-9.0: reading}
+
+  - note: R-3.2 is withdrawn from the proposal
+    action: {remove: R-3.2}
+    expect:
+      referee:
+        exit: 1
+        findings:
+          text: "declared and absent"
+          names: [R-3.2]
+          not_names: [R-7.1, R-9.0]
+      substrate: {R-3.2: absent, R-7.1: reading}
+
+  - note: R-7.1 is present but unanswered, which the referee must decline rather than judge
+    action: {disable: R-7.1}
+    expect:
+      referee:
+        declines: {reason: no_answer, names: [R-7.1], not_names: [R-9.0]}
+        checked: {exact: 1}
+      substrate: {R-7.1: disabled, R-9.0: reading}
+
+  - note: R-9.0 contradicts R-7.1 -- a fault the built-in verbs cannot express
+    action: {contradict: {entity: R-9.0, with: R-7.1}}
+    expect:
+      referee:
+        exit: 1
+        findings: {text: "contradicts", names: [R-9.0], not_names: [R-7.1]}

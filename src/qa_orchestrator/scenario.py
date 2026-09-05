@@ -1,16 +1,22 @@
-"""Parse and validate a `qa-scenario/1` file.
+"""The scenario format: what a run does, and what it expects, in one file.
 
-A scenario is an ordered list of phases. Each phase does something to the machine,
-takes some walks, and states what the referee should conclude. The format is
-versioned from the first commit because the orchestrator, the backends and the
-pipeline templates all read it, and a format three consumers share is one that
-cannot be changed quietly.
+**Everything checked at parse time, with the phase named.** A phase with no
+captures, an `expect` block that sets nothing, a verb this build does not have,
+a `drive` with fewer values than captures, an expectation on a report field the
+referee's profile does not declare -- all refused before anything runs. Each
+would otherwise produce a run that executed, reported clean, and tested nothing,
+which is indistinguishable from a real pass at the exit code.
 
-**Validation refuses rather than defaults.** A phase naming an action this build
-does not implement, an `expect` block with no expectations in it, or a walk count
-of zero are all rejected at parse time with the phase index named. The alternative
-is a scenario that runs, reports clean, and tested nothing -- which is the failure
-this whole family is built to make impossible.
+**Every name is asked of a registry, never of a copy kept here.** Substrates,
+verbs, referees and the referee's modes come from `substrate`, `actions` and
+`referee`. A second copy of any of those lists is what once made `register` a
+door into a room with no entrance.
+
+Two formats are read. `qa-scenario/2` is the general vocabulary. `qa-scenario/1`
+is what every scenario written before it says -- `backend`, `machine`, `walks`,
+`sensors`, `expect.audit`, `expect.firmware` -- and those files are on disk and
+published. A file that spells a thing BOTH ways is refused, because a reader
+that picked one would drop the other without a word.
 """
 
 from __future__ import annotations
@@ -20,91 +26,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import backends
-from .referee import known_tools, profile
+from . import actions, referee, substrate
+from .actions import one_of
+from .vocabulary import PRESENCE, ScenarioError
 
-FORMAT = "qa-scenario/1"
-
-# Every action this build can perform. A closed set, checked at parse time: an
-# unrecognised action must stop the run, because the phase that would have
-# perturbed the machine is exactly the phase whose absence makes everything
-# afterwards pass for the wrong reason.
-ACTIONS = {
-    "remove":  "make an entity vanish entirely (for a BMC, the firmware-upgrade case)",
-    "disable": "switch an entity off; it stays declared and stops reporting",
-    "fail":    "make a region answer with an error status (a partial read)",
-    "drift":   "move an entity's value, once",
-    "drive":   "set an entity's value before each walk of this phase, in order",
-}
-
-class ScenarioError(ValueError):
-    """A scenario that cannot be run as written. Always names where."""
-
-
-@dataclass(frozen=True)
-class Expectation:
-    """What the referee should conclude at the end of a phase.
-
-    `exit` is the tool's own exit code. `finding` is a substring that must appear
-    in the human report, `names` are sensors that must be named. All optional
-    individually -- but an `expect` block that sets none of them is refused, since
-    it would assert nothing while looking like an assertion.
-    """
-    exit_code: int | None = None
-    finding: str | None = None
-    names: tuple[str, ...] = ()
-    not_names: tuple[str, ...] = ()
-
-    def is_empty(self) -> bool:
-        return (self.exit_code is None and self.finding is None
-                and not self.names and not self.not_names)
-
-
-@dataclass(frozen=True)
-class FirmwareExpectation:
-    """What the MACHINE should look like, independent of what the referee said.
-
-    Kept separate from `Expectation` on purpose. *The fan is gone* and *the tool
-    noticed the fan is gone* are two different claims, and a scenario that could
-    only express the second could never tell a broken injector from a broken
-    referee.
-    """
-    states: dict[str, str] = field(default_factory=dict)
-    within_walks: int | None = None
-
-
-@dataclass(frozen=True)
-class Phase:
-    index: int
-    walks: int
-    action: tuple[str, Any] | None = None
-    expect: Expectation | None = None
-    expect_firmware: FirmwareExpectation | None = None
-
-    def describe(self) -> str:
-        if self.action is None:
-            return f"phase {self.index}: {self.walks} walk(s), no action"
-        verb, payload = self.action
-        return f"phase {self.index}: {verb} {payload!r}, then {self.walks} walk(s)"
-
-
-@dataclass(frozen=True)
-class Scenario:
-    name: str
-    backend: str
-    config: tuple[str, ...]
-    phases: tuple[Phase, ...]
-    machine: dict[str, Any] = field(default_factory=dict)
-    mode: str = "detect"
-    #: Which program grades the run. Named, because a vertical that supplies its
-    #: own substrate has its own tool to grade with, and `mode` means whatever
-    #: that tool says it means.
-    referee: str = "bmc-sensor-audit"
-    source: Path | None = None
-
-    @property
-    def total_walks(self) -> int:
-        return sum(p.walks for p in self.phases)
+FORMATS = ("qa-scenario/1", "qa-scenario/2")
+FORMAT = FORMATS[-1]
 
 
 def _require(condition: bool, message: str) -> None:
@@ -112,131 +39,247 @@ def _require(condition: bool, message: str) -> None:
         raise ScenarioError(message)
 
 
-def drive_series(payload: dict) -> dict[str, list]:
-    """Normalise every form of `drive` to `{entity: [values]}`.
+# -- what a phase expects ------------------------------------------------------
 
-    One reader for all spellings, so the sugar cannot come to mean something
-    slightly different from the general form.
+@dataclass(frozen=True)
+class FindingsExpectation:
+    """Which findings the report should carry, and which subjects it must not name."""
 
-    `entity`/`entities` is the backend protocol's vocabulary; `sensor`/`sensors`
-    is what every scenario written before it says. Both are read, and no format
-    bump goes with the addition: the test for that is whether an OLDER reader
-    would SILENTLY IGNORE the new key, and it would not -- it validates the
-    action payload and refuses `entity` by name. A loud refusal is a reader
-    correctly declining a file it does not understand, which is what the format
-    version already means.
-    """
-    plural = payload.get("entities") or payload.get("sensors")
-    if plural:
-        return {str(name): list(values) for name, values in plural.items()}
-    name = payload.get("entity", payload.get("sensor"))
-    return {str(name): list(payload["values"])}
+    text: str | None = None
+    names: tuple[str, ...] = ()
+    not_names: tuple[str, ...] = ()
+
+    def is_empty(self) -> bool:
+        return self.text is None and not self.names and not self.not_names
 
 
-def _parse_expect(raw: Any, where: str) -> tuple[Expectation | None, FirmwareExpectation | None]:
+@dataclass(frozen=True)
+class DeclinesExpectation:
+    """Which evaluations the referee should have DECLINED, and said so."""
+
+    reason: str | None = None
+    names: tuple[str, ...] = ()
+    not_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CheckedExpectation:
+    """How many evaluations the referee should report having attempted."""
+
+    exact: int | None = None
+    at_least: int | None = None
+
+
+@dataclass(frozen=True)
+class RefereeExpectation:
+    exit_code: int | None = None
+    findings: FindingsExpectation | None = None
+    declines: DeclinesExpectation | None = None
+    checked: CheckedExpectation | None = None
+
+    def is_empty(self) -> bool:
+        return (self.exit_code is None and self.findings is None
+                and self.declines is None and self.checked is None)
+
+
+@dataclass(frozen=True)
+class SubstrateExpectation:
+    """What the substrate itself should look like, read from it, not from the scenario."""
+
+    states: dict[str, str]
+
+
+@dataclass(frozen=True)
+class Phase:
+    index: int
+    captures: int
+    action: tuple[str, Any] | None
+    expect_referee: RefereeExpectation | None
+    expect_substrate: SubstrateExpectation | None
+    note: str | None = None
+
+    @property
+    def asserts_anything(self) -> bool:
+        return self.expect_referee is not None or self.expect_substrate is not None
+
+    def describe(self) -> str:
+        what = f"phase {self.index}"
+        if self.note:
+            what += f": {self.note}"
+        if self.action:
+            what += f"  [{self.action[0]}]"
+        return f"{what}  ({self.captures} capture(s))"
+
+
+@dataclass(frozen=True)
+class Scenario:
+    name: str
+    format: str
+    substrate: str
+    setup: dict[str, Any]
+    referee: str
+    mode: str
+    config: tuple[str, ...]
+    phases: tuple[Phase, ...]
+    source: Path | None = None
+
+    @property
+    def total_captures(self) -> int:
+        return sum(p.captures for p in self.phases)
+
+    # 0.2.x spellings, so a caller written against them still reads.
+    @property
+    def backend(self) -> str:
+        return self.substrate
+
+    @property
+    def machine(self) -> dict[str, Any]:
+        return self.setup
+
+
+# -- readers -------------------------------------------------------------------
+
+def _names(raw: Any, where: str, key: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    _require(isinstance(raw, list), f"{where}: {key} must be a list of names")
+    return tuple(str(n) for n in raw)
+
+
+def _parse_findings(raw: Any, where: str) -> FindingsExpectation:
+    _require(isinstance(raw, dict), f"{where}: findings must be a mapping")
+    unknown = set(raw) - {"text", "names", "not_names"}
+    _require(not unknown, f"{where}: findings has unknown key(s) {sorted(unknown)}; "
+                          f"known keys are text, names, not_names")
+    text = raw.get("text")
+    _require(text is None or (isinstance(text, str) and text),
+             f"{where}: findings.text must be a non-empty string")
+    names, not_names = _names(raw.get("names"), where, "names"), _names(raw.get("not_names"), where, "not_names")
+    overlap = set(names) & set(not_names)
+    _require(not overlap, f"{where}: {sorted(overlap)} is in both names and not_names, "
+                          f"which cannot both hold")
+    found = FindingsExpectation(text=text, names=names, not_names=not_names)
+    _require(not found.is_empty(), f"{where}: findings sets nothing")
+    return found
+
+
+def _parse_declines(raw: Any, where: str, tool: referee.Tool) -> DeclinesExpectation:
+    _require(tool.report.declines is not None,
+             f"{where}: expects declines, but {tool.name}'s profile declares no "
+             f"declines list in its report, so this could never hold")
+    _require(isinstance(raw, dict), f"{where}: declines must be a mapping")
+    unknown = set(raw) - {"reason", "names", "not_names"}
+    _require(not unknown, f"{where}: declines has unknown key(s) {sorted(unknown)}")
+    reason = raw.get("reason")
+    _require(reason is None or (isinstance(reason, str) and reason),
+             f"{where}: declines.reason must be a non-empty string")
+    names, not_names = _names(raw.get("names"), where, "names"), _names(raw.get("not_names"), where, "not_names")
+    _require(reason is not None or names or not_names, f"{where}: declines sets nothing")
+    return DeclinesExpectation(reason=reason, names=names, not_names=not_names)
+
+
+def _parse_checked(raw: Any, where: str, tool: referee.Tool) -> CheckedExpectation:
+    _require(tool.report.checked is not None,
+             f"{where}: expects a checked count, but {tool.name}'s profile declares "
+             f"no denominator in its report, so this could never hold")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return CheckedExpectation(exact=raw)
+    _require(isinstance(raw, dict), f"{where}: checked must be an integer or "
+                                    f"{{exact: N}} / {{at_least: N}}")
+    unknown = set(raw) - {"exact", "at_least"}
+    _require(not unknown, f"{where}: checked has unknown key(s) {sorted(unknown)}")
+    _require(bool(raw), f"{where}: checked sets nothing")
+    for key, value in raw.items():
+        _require(isinstance(value, int) and not isinstance(value, bool) and value >= 0,
+                 f"{where}: checked.{key} must be a non-negative integer")
+    return CheckedExpectation(exact=raw.get("exact"), at_least=raw.get("at_least"))
+
+
+def _parse_referee_expectation(raw: Any, where: str, tool: referee.Tool,
+                               spelling: str, mode: str) -> RefereeExpectation:
+    _require(isinstance(raw, dict), f"{where}: expect.{spelling} must be a mapping")
+    if spelling == "audit":
+        # v1: `finding`, `names`, `not_names` sit beside `exit`. Lifted into the
+        # v2 shape once, here, so the comparator has one thing to read.
+        unknown = set(raw) - {"exit", "finding", "names", "not_names"}
+        _require(not unknown, f"{where}: expect.audit has unknown key(s) {sorted(unknown)}; "
+                              f"known keys are exit, finding, names, not_names")
+        lifted = {k: raw[k] for k in ("names", "not_names") if k in raw}
+        if "finding" in raw:
+            lifted["text"] = raw["finding"]
+        raw = {"exit": raw["exit"]} if "exit" in raw else {}
+        if lifted:
+            raw["findings"] = lifted
+    unknown = set(raw) - {"exit", "findings", "declines", "checked"}
+    _require(not unknown, f"{where}: expect.referee has unknown key(s) {sorted(unknown)}; "
+                          f"known keys are exit, findings, declines, checked")
+    exit_code = raw.get("exit")
+    _require(exit_code is None or (isinstance(exit_code, int) and not isinstance(exit_code, bool)),
+             f"{where}: expect.{spelling}.exit must be an integer")
+    expectation = RefereeExpectation(
+        exit_code=exit_code,
+        findings=_parse_findings(raw["findings"], where) if "findings" in raw else None,
+        declines=_parse_declines(raw["declines"], where, tool) if "declines" in raw else None,
+        checked=_parse_checked(raw["checked"], where, tool) if "checked" in raw else None)
+    _require(not expectation.is_empty(),
+             f"{where}: expect.{spelling} sets nothing, so it would assert nothing "
+             f"while looking like an assertion")
+    # Findings can be judged from prose when a mode has no JSON, and every such
+    # mismatch says so. Declines and the denominator cannot: there is no prose
+    # shape for *what was not checked* that a comparator could read honestly.
+    for what in ("declines", "checked"):
+        if getattr(expectation, what) is not None:
+            _require(tool.has_json(mode),
+                     f"{where}: expects {what}, but {tool.name} has no JSON form for "
+                     f"mode {mode!r}, so they could not be read")
+    return expectation
+
+
+def _parse_substrate_expectation(raw: Any, where: str, spelling: str) -> SubstrateExpectation:
+    _require(isinstance(raw, dict), f"{where}: expect.{spelling} must be a mapping")
+    _require("within_walks" not in raw and "within_captures" not in raw,
+             f"{where}: expect.{spelling}.within_* was read by nothing in 0.2.x and is "
+             f"not implemented; remove it rather than carry a key that asserts nothing")
+    states = {str(k): v for k, v in raw.items()}
+    _require(bool(states), f"{where}: expect.{spelling} names no entity states")
+    for entity, state in states.items():
+        _require(state in PRESENCE,
+                 f"{where}: expect.{spelling}.{entity} is {state!r}; expected one of "
+                 f"{', '.join(PRESENCE)}")
+    return SubstrateExpectation(states={k: str(v) for k, v in states.items()})
+
+
+def _parse_expect(raw: Any, where: str, tool: referee.Tool, mode: str
+                  ) -> tuple[RefereeExpectation | None, SubstrateExpectation | None]:
     if raw is None:
         return None, None
     _require(isinstance(raw, dict), f"{where}: expect must be a mapping")
+    unknown = set(raw) - {"referee", "audit", "substrate", "firmware"}
+    _require(not unknown, f"{where}: expect has unknown key(s) {sorted(unknown)}; "
+                          f"known keys are referee and substrate")
 
-    audit = raw.get("audit")
-    expectation = None
-    if audit is not None:
-        _require(isinstance(audit, dict), f"{where}: expect.audit must be a mapping")
-        unknown = set(audit) - {"exit", "finding", "names", "not_names"}
-        _require(not unknown,
-                 f"{where}: expect.audit has unknown key(s) {sorted(unknown)}; "
-                 f"known keys are exit, finding, names, not_names")
-        names = audit.get("names") or []
-        not_names = audit.get("not_names") or []
-        for key, value in (("names", names), ("not_names", not_names)):
-            _require(isinstance(value, list),
-                     f"{where}: expect.audit.{key} must be a list")
-        overlap = set(map(str, names)) & set(map(str, not_names))
-        _require(not overlap,
-                 f"{where}: {sorted(overlap)} is in both names and not_names, "
-                 f"which cannot both hold")
-        expectation = Expectation(exit_code=audit.get("exit"),
-                                  finding=audit.get("finding"),
-                                  names=tuple(str(n) for n in names),
-                                  not_names=tuple(str(n) for n in not_names))
-        _require(not expectation.is_empty(),
-                 f"{where}: expect.audit sets nothing, so it would assert nothing "
-                 f"while looking like an assertion")
-
-    # `substrate` is the general spelling; `firmware` is what shipped scenarios
-    # say. An older reader given `substrate` refuses it by name below, so this
-    # addition has no silent-drop path and needs no format bump.
-    firmware = raw.get("substrate", raw.get("firmware"))
-    firmware_expectation = None
-    if firmware is not None:
-        _require(isinstance(firmware, dict), f"{where}: expect.firmware must be a mapping")
-        within = firmware.get("within_walks")
-        states = {k: str(v) for k, v in firmware.items() if k != "within_walks"}
-        _require(bool(states),
-                 f"{where}: expect.firmware names no sensor states")
-        for sensor, state in states.items():
-            _require(state in {"absent", "disabled", "reading"},
-                     f"{where}: expect.firmware.{sensor} is {state!r}; "
-                     f"expected absent, disabled or reading")
-        firmware_expectation = FirmwareExpectation(states=states, within_walks=within)
-
-    unknown = set(raw) - {"audit", "firmware", "substrate"}
-    _require(not unknown, f"{where}: expect has unknown key(s) {sorted(unknown)}")
-    _require(expectation is not None or firmware_expectation is not None,
+    on_referee = on_substrate = None
+    if "referee" in raw or "audit" in raw:
+        spelling, block = one_of(raw, ("referee", "audit"), where, "expect.referee")
+        on_referee = _parse_referee_expectation(block, where, tool, spelling, mode)
+    if "substrate" in raw or "firmware" in raw:
+        spelling, block = one_of(raw, ("substrate", "firmware"), where, "expect.substrate")
+        on_substrate = _parse_substrate_expectation(block, where, spelling)
+    _require(on_referee is not None or on_substrate is not None,
              f"{where}: expect is present and empty")
-    return expectation, firmware_expectation
+    return on_referee, on_substrate
 
 
-def _parse_action(raw: Any, where: str) -> tuple[str, Any] | None:
+def _parse_action(raw: Any, where: str, captures: int) -> tuple[str, Any] | None:
     if raw is None:
         return None
     _require(isinstance(raw, dict), f"{where}: action must be a mapping")
     _require(len(raw) == 1,
-             f"{where}: action must name exactly one verb, got {sorted(raw)}. "
-             f"Two actions in one phase cannot be attributed when a verdict moves")
-    verb, payload = next(iter(raw.items()))
-    _require(verb in ACTIONS,
-             f"{where}: unknown action {verb!r}. This build implements "
-             f"{', '.join(sorted(ACTIONS))} -- an unrecognised verb is refused rather "
-             f"than skipped, because a phase that silently does nothing makes every "
-             f"phase after it pass for the wrong reason")
-    if verb == "drive":
-        # Two forms. `sensors: {name: [...]}` is the general one and `sensor` +
-        # `values` is sugar for a single entry.
-        #
-        # The general form exists because the acceptance scenario demanded it.
-        # Showing that the engine names EXACTLY the frozen sensor needs another
-        # sensor still moving beside it, and showing it stays quiet during the
-        # driven phase needs every sensor moving at once -- neither of which a
-        # one-sensor verb can say, and two actions in a phase are refused because
-        # a moved verdict could not then be attributed. The specification this was
-        # built from says that if the harness cannot express the experiment that
-        # already exists, the DSL is wrong. It could not, so this is the fix.
-        key = "entities" if "entities" in payload else (
-              "sensors" if "sensors" in payload else None)
-        if key is not None:
-            _require(isinstance(payload[key], dict) and payload[key],
-                     f"{where}: drive.{key} must be a non-empty mapping of "
-                     f"entity to values")
-            for entity, values in payload[key].items():
-                _require(isinstance(values, list) and values,
-                         f"{where}: drive.{key}.{entity} must be a non-empty list")
-        else:
-            _require(isinstance(payload, dict)
-                     and ("entity" in payload or "sensor" in payload)
-                     and "values" in payload,
-                     f"{where}: drive needs either entities: {{name: [...]}} or a "
-                     f"single entity and values")
-            _require(isinstance(payload["values"], list) and payload["values"],
-                     f"{where}: drive.values must be a non-empty list")
-    if verb == "drift":
-        _require(isinstance(payload, dict)
-                 and ("entity" in payload or "sensor" in payload) and "to" in payload,
-                 f"{where}: drift needs an entity and a value to move it to")
-    if verb == "fail":
-        _require(isinstance(payload, dict) and "path" in payload and "status" in payload,
-                 f"{where}: fail needs a path and an HTTP status")
-    return verb, payload
+             f"{where}: action must name exactly one verb, got {sorted(raw)}. Two "
+             f"actions in one phase cannot be attributed when a verdict moves")
+    name, payload = next(iter(raw.items()))
+    verb = actions.resolve(str(name), where)
+    return verb.name, verb.validate(payload, where, captures)
 
 
 def parse(text: str, source: Path | None = None) -> Scenario:
@@ -253,87 +296,86 @@ def parse(text: str, source: Path | None = None) -> Scenario:
 
     _require(isinstance(raw, dict), "a scenario must be a mapping")
     declared = raw.get("format")
-    _require(declared == FORMAT,
-             f"format is {declared!r}; this build reads {FORMAT!r}. The version is "
-             f"checked rather than assumed because three separate programs read "
-             f"this file")
+    _require(declared in FORMATS,
+             f"format is {declared!r}; this build reads {' and '.join(FORMATS)}. The "
+             f"version is checked rather than assumed because separate programs "
+             f"read this file")
+    v1 = declared == FORMATS[0]
 
-    # Asked of the registry, never of a copy kept here. A second copy of this
-    # list is what made `register` a door into a room with no entrance.
-    tiers = backends.known()
-    backend = raw.get("backend")
-    _require(backend in tiers,
-             f"backend is {backend!r}; expected one of {list(tiers)}")
+    unknown = set(raw) - {"format", "name", "substrate", "backend", "setup", "machine",
+                          "referee", "mode", "config", "phases"}
+    _require(not unknown, f"unknown top-level key(s) {sorted(unknown)}")
+
+    tiers = substrate.known()
+    _, tier = one_of(raw, ("substrate", "backend"), "scenario", "substrate")
+    _require(tier in tiers,
+             f"substrate is {tier!r}; this build has {list(tiers)}. A vertical's tier "
+             f"is registered by loading its plugin")
+
+    setup: dict[str, Any] = {}
+    if "setup" in raw or "machine" in raw:
+        _, setup = one_of(raw, ("setup", "machine"), "scenario", "setup")
+        _require(isinstance(setup, dict), "setup must be a mapping")
+
+    # The referee, and then the modes ITS profile declares. A v1 file that names
+    # none means the one program that ever graded v1 files; which program that is
+    # belongs to a vertical, and the vertical says so when it registers.
+    referee_name = raw.get("referee")
+    if referee_name is None:
+        _require(v1, "a scenario must name its referee")
+        referee_name = referee.legacy_default()
+        _require(referee_name is not None,
+                 "this qa-scenario/1 file names no referee, and no loaded vertical "
+                 "declares the v1 default; load the vertical that grades v1 files, "
+                 "or add `referee:`")
+    tools = referee.known_tools()
+    _require(referee_name in tools,
+             f"referee is {referee_name!r}; this build has {list(tools)}. A vertical's "
+             f"referee is registered by loading its plugin")
+    tool = referee.profile(str(referee_name))
+
+    mode = raw.get("mode", tool.modes[0])
+    _require(mode in tool.modes, f"mode is {mode!r}; {tool.name} has {list(tool.modes)}")
 
     config = raw.get("config")
     _require(config is not None, "a scenario must name a config to judge against")
-    config = tuple(config) if isinstance(config, list) else (str(config),)
-
-    # **Relative to the scenario file, not to whoever ran it.** Resolving against
-    # the working directory made a scenario runnable only from the directory it
-    # happened to sit in: the referee could not find the config, returned exit 2,
-    # and every expectation in the file mismatched at once -- so the failure read
-    # as "the tool disagrees with all of this" rather than "nobody found the
-    # board". A pipeline checks the repository out somewhere else and runs from a
-    # workspace root, which is exactly where this bites.
-    #
-    # Found by composing the suite rather than by testing this repository, which
-    # is the argument for the umbrella having its own end-to-end test.
-    #
-    # Normalised as well as resolved, so `scenarios/../fixtures/board.json` is
-    # not what a failure message hands to somebody trying to find the file.
-    if source is not None:
+    config = tuple(str(c) for c in config) if isinstance(config, list) else (str(config),)
+    # Relative to the scenario file, not to whoever ran it -- when the profile
+    # says configs are files at all.
+    if source is not None and tool.configs_are_paths:
         base = Path(source).resolve().parent
         config = tuple(str(Path(entry) if Path(entry).is_absolute()
                            else (base / entry).resolve()) for entry in config)
 
-    # The referee, and then the modes ITS profile declares. `mode` used to be
-    # checked against two names written here, which are two of the built-in
-    # tool's subcommands -- so a scenario could name another referee and would
-    # still be held to this one's vocabulary.
-    referee_name = raw.get("referee", "bmc-sensor-audit")
-    tiers = known_tools()
-    _require(referee_name in tiers,
-             f"referee is {referee_name!r}; expected one of {list(tiers)}")
-    graded_by = profile(str(referee_name))
-
-    mode = raw.get("mode", graded_by.modes[0])
-    _require(mode in graded_by.modes,
-             f"mode is {mode!r}; {referee_name} has {list(graded_by.modes)}")
-
     raw_phases = raw.get("phases")
-    _require(isinstance(raw_phases, list) and raw_phases,
+    _require(isinstance(raw_phases, list) and bool(raw_phases),
              "a scenario must have at least one phase")
 
     phases = []
     for index, raw_phase in enumerate(raw_phases, start=1):
         where = f"phase {index}"
         _require(isinstance(raw_phase, dict), f"{where}: must be a mapping")
-        unknown = set(raw_phase) - {"walks", "action", "expect", "note"}
+        unknown = set(raw_phase) - {"captures", "walks", "action", "expect", "note"}
         _require(not unknown, f"{where}: unknown key(s) {sorted(unknown)}")
 
-        walks = raw_phase.get("walks", 1)
-        _require(isinstance(walks, int) and walks > 0,
-                 f"{where}: walks must be a positive integer, got {walks!r}. A phase "
-                 f"that takes no walk gathers no evidence")
+        captures = 1
+        if "captures" in raw_phase or "walks" in raw_phase:
+            _, captures = one_of(raw_phase, ("captures", "walks"), where, "captures")
+        _require(isinstance(captures, int) and not isinstance(captures, bool) and captures > 0,
+                 f"{where}: captures must be a positive integer, got {captures!r}. A "
+                 f"phase that takes no capture gathers no evidence")
 
-        action = _parse_action(raw_phase.get("action"), where)
-        expectation, firmware = _parse_expect(raw_phase.get("expect"), where)
-
-        if action and action[0] == "drive":
-            for sensor, values in drive_series(action[1]).items():
-                _require(len(values) >= walks,
-                         f"{where}: drive supplies {len(values)} value(s) for "
-                         f"{sensor} over {walks} walk(s); the last walks would "
-                         f"repeat a reading and look frozen when nothing froze them")
-
-        phases.append(Phase(index=index, walks=walks, action=action,
-                            expect=expectation, expect_firmware=firmware))
+        action = _parse_action(raw_phase.get("action"), where, captures)
+        on_referee, on_substrate = _parse_expect(raw_phase.get("expect"), where, tool, str(mode))
+        note = raw_phase.get("note")
+        phases.append(Phase(index=index, captures=captures, action=action,
+                            expect_referee=on_referee, expect_substrate=on_substrate,
+                            note=str(note) if note is not None else None))
 
     name = raw.get("name") or (source.stem if source else "unnamed")
-    return Scenario(name=str(name), backend=str(backend), config=config,
-                    phases=tuple(phases), machine=raw.get("machine") or {},
-                    mode=mode, referee=str(referee_name), source=source)
+    return Scenario(name=str(name), format=str(declared), substrate=str(tier),
+                    setup=setup, referee=str(referee_name), mode=str(mode),
+                    config=config, phases=tuple(phases), source=source)
 
 
 def load(path: str | Path) -> Scenario:

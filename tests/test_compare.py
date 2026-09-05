@@ -1,28 +1,28 @@
-"""The comparator, exercised in both directions.
+"""The comparator, in isolation: did the referee conclude what the scenario said?
 
-Pure functions over a verdict and an expectation, so all of this runs with no
-machine, no subprocess and no referee installed -- which matters, because the
-comparison is the half of a harness that usually cannot be tested at all.
+Pure functions over a verdict and an expectation -- no I/O, no subprocess, no
+substrate -- so the half of a harness that usually cannot be tested at all is.
 
-**The load-bearing case is `names` scoped to the finding.** It started as a
-substring test over the whole report and was wrong: every declared sensor appears
-in the coverage table above the findings, so `names: [Inlet]` passed whether or
-not the engine had said anything about Inlet. It asserted that a sensor exists,
-which was never in doubt.
+**Two paths, and which one runs is not the comparator's choice.** A finding is
+judged from the JSON report when there is one, and from prose only when the
+profile declares no JSON form for the mode. The prose rules are the fiddly ones
+and they are the reason `names:` means anything: a name has to appear in the
+FINDING, not merely somewhere in a report that lists every declared subject.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from qa_orchestrator.compare import compare_audit, compare_firmware
-from qa_orchestrator.referee import Verdict
-from qa_orchestrator.scenario import Expectation, FirmwareExpectation
+from qa_orchestrator.compare import compare_referee, compare_substrate
+from qa_orchestrator.referee import ReportSchema, Verdict
+from qa_orchestrator.scenario import (FindingsExpectation, RefereeExpectation,
+                                      SubstrateExpectation)
 
-# The shape of a real report: a coverage table naming every sensor, then findings
+# A real report's shape: a coverage table naming every subject, then findings
 # naming only some. The distinction the comparator has to respect.
-REPORT = """\
-Sensor coverage: walk_028.json
+PROSE = """\
+Sensor coverage: capture_028.json
 
   declared              2
   matched               2
@@ -35,17 +35,33 @@ Findings -- 1
   Inlet: the reading has not changed across 16 of 28 observations in window
 """
 
+SCHEMA = ReportSchema(findings="findings", subject=("sensor",), text=("detail",))
 
-def verdict(exit_code=1, stdout=REPORT):
+
+def prose_verdict(exit_code=1, stdout=PROSE):
+    """No report: the profile declares no JSON for this mode, so prose is read."""
     return Verdict(exit_code=exit_code, stdout=stdout, stderr="")
+
+
+def report_verdict(findings, exit_code=1):
+    return Verdict(exit_code=exit_code, stdout="", stderr="",
+                   report={"findings": list(findings)}, schema=SCHEMA)
+
+
+def expect(text=None, names=(), not_names=(), exit_code=None):
+    return RefereeExpectation(
+        exit_code=exit_code,
+        findings=FindingsExpectation(text=text, names=tuple(names),
+                                     not_names=tuple(not_names)))
 
 
 class TestTheExitCode:
     def test_a_match_is_silent(self):
-        assert compare_audit(Expectation(exit_code=1), verdict()) == []
+        assert compare_referee(RefereeExpectation(exit_code=1), prose_verdict()) == []
 
     def test_a_mismatch_names_both_sides_in_words(self):
-        found = compare_audit(Expectation(exit_code=0), verdict(exit_code=2))
+        found = compare_referee(RefereeExpectation(exit_code=0),
+                                prose_verdict(exit_code=2))
         assert len(found) == 1
         assert "clean" in str(found[0]) and "incomplete" in str(found[0])
 
@@ -59,105 +75,121 @@ class TestTheExitCode:
             assert _word(code) == word
 
 
-class TestNamesAreScopedToTheFinding:
-    def test_a_sensor_named_in_the_finding_matches(self):
-        expectation = Expectation(finding="has not changed across", names=("Inlet",))
-        assert compare_audit(expectation, verdict()) == []
+class TestNamesAreScopedToTheFindingInProse:
+    def test_a_subject_named_in_the_finding_matches(self):
+        assert compare_referee(expect("has not changed across", names=("Inlet",)),
+                               prose_verdict()) == []
 
-    def test_a_sensor_present_only_in_the_coverage_table_does_not_match(self):
+    def test_a_subject_only_in_the_coverage_table_does_not_match(self):
         """The defect this scoping fixes. `Outlet` appears in the report -- it is
-        a declared sensor -- but the engine said nothing about it, and a harness
-        that accepted that would report detection where there was none."""
-        expectation = Expectation(finding="has not changed across", names=("Outlet",))
-        found = compare_audit(expectation, verdict(
-            stdout=REPORT.replace("  declared              2",
-                                  "  declared  2   Outlet")))
-        assert len(found) == 1
-        assert "Outlet" in str(found[0])
+        declared -- but the referee said nothing about it, and a harness that
+        accepted that would report detection where there was none."""
+        found = compare_referee(
+            expect("has not changed across", names=("Outlet",)),
+            prose_verdict(stdout=PROSE.replace("  declared              2",
+                                               "  declared  2   Outlet")))
+        assert len(found) == 1 and "Outlet" in str(found[0])
 
-    def test_not_names_catches_a_sensor_the_engine_should_not_have_flagged(self):
+    def test_not_names_catches_a_subject_that_should_not_have_been_flagged(self):
         """Half the acceptance claim. Naming the frozen sensor is one thing;
         showing the control beside it was NOT named is what makes it evidence of
         detection rather than of a check that flags everything."""
-        noisy = REPORT + "  Outlet: the reading has not changed across 16 of 28\n"
-        expectation = Expectation(finding="has not changed across",
-                                  names=("Inlet",), not_names=("Outlet",))
-        found = compare_audit(expectation, verdict(stdout=noisy))
-        assert len(found) == 1
-        assert "Outlet" in str(found[0])
+        noisy = PROSE + "  Outlet: the reading has not changed across 16 of 28\n"
+        found = compare_referee(
+            expect("has not changed across", names=("Inlet",), not_names=("Outlet",)),
+            prose_verdict(stdout=noisy))
+        assert len(found) == 1 and "Outlet" in str(found[0])
 
     def test_not_names_is_silent_when_the_control_stayed_quiet(self):
-        expectation = Expectation(finding="has not changed across",
-                                  names=("Inlet",), not_names=("Outlet",))
-        assert compare_audit(expectation, verdict()) == []
+        assert compare_referee(
+            expect("has not changed across", names=("Inlet",), not_names=("Outlet",)),
+            prose_verdict()) == []
 
     def test_a_name_on_the_header_line_above_the_finding_counts(self):
-        """The tool reports coverage as a stanza: the sensor's name on one line,
-        the finding text indented under it. A match confined to the finding line
-        found no names at all, so `names:` could never hold on any coverage
-        scenario -- as useless as one that always holds."""
+        """Reports come as stanzas: the subject on one line, the text indented
+        under it. A match confined to the finding line found no names at all, so
+        `names:` could never hold -- as useless as one that always holds."""
         stanza = ("Declared and not reported at all -- 1 (regression)\n"
                   "  Outlet\n"
                   "      declared by TMP75 in the configuration and not reported "
                   "by the machine at all\n"
                   "      declared in board.json\n")
-        expectation = Expectation(finding="not reported by the machine at all",
-                                  names=("Outlet",))
-        assert compare_audit(expectation, verdict(stdout=stanza)) == []
+        assert compare_referee(
+            expect("not reported by the machine at all", names=("Outlet",)),
+            prose_verdict(stdout=stanza)) == []
 
     def test_a_neighbouring_stanza_does_not_leak_into_the_block(self):
         """Walking back stops at the nearest shallower line, so a block belongs to
-        one sensor. Otherwise `not_names` would trip on whichever sensor happened
-        to be reported just above."""
-        two = ("  Outlet\n"
-               "      declared by TMP75 and not reported by the machine at all\n"
+        one subject. Otherwise `not_names` trips on whichever neighbour is near."""
+        two = ("Declared and not reported at all -- 1\n"
+               "  Outlet\n"
+               "      not reported by the machine at all\n"
                "  Inlet\n"
-               "      declared by TMP75 and not reported by the machine at all\n")
-        expectation = Expectation(finding="not reported by the machine at all",
-                                  names=("Outlet", "Inlet"))
-        assert compare_audit(expectation, verdict(stdout=two)) == []
+               "      reported and healthy\n")
+        assert compare_referee(
+            expect("not reported by the machine at all",
+                   names=("Outlet",), not_names=("Inlet",)),
+            prose_verdict(stdout=two)) == []
 
-        only_one = ("  Outlet\n"
-                    "      declared by TMP75 and not reported by the machine at all\n"
-                    "  Inlet\n"
-                    "      reading 21.0\n")
-        strict = Expectation(finding="not reported by the machine at all",
-                             names=("Outlet",), not_names=("Inlet",))
-        assert compare_audit(strict, verdict(stdout=only_one)) == []
+    def test_without_a_text_the_whole_report_is_searched(self):
+        """The weaker claim, and the one a scenario asks for by not narrowing."""
+        assert compare_referee(expect(names=("Inlet",)), prose_verdict()) == []
 
-    def test_without_a_finding_the_whole_report_is_searched(self):
-        """The weaker claim, which is what a scenario asks for by not narrowing."""
-        assert compare_audit(Expectation(names=("Inlet",)), verdict()) == []
-
-
-class TestEveryMismatchIsReported:
     def test_three_wrong_things_produce_three_mismatches(self):
-        """Someone reading a failure is deciding whether the firmware regressed or
-        the harness did. Revealing one difference at a time costs a run each."""
-        expectation = Expectation(exit_code=0, finding="absent", names=("Fan1",))
-        found = compare_audit(expectation, verdict())
-        assert len(found) == 3
+        """Every mismatch, not the first: someone reading a failed scenario is
+        deciding whether the subject regressed or the harness did, and revealing
+        one difference at a time costs a run each."""
+        found = compare_referee(
+            RefereeExpectation(
+                exit_code=0,
+                findings=FindingsExpectation(text="no such text",
+                                             names=("Nobody",))),
+            prose_verdict())
+        assert len(found) == 3, [str(m) for m in found]
 
 
-class TestFirmwareIsComparedSeparately:
-    def test_the_machine_state_is_its_own_claim(self):
-        """*The fan is gone* and *the tool noticed* are different facts. A harness
-        that could only express the second could never tell a broken injector from
-        a broken referee."""
-        found = compare_firmware(FirmwareExpectation(states={"Fan1": "absent"}),
-                                 {"Fan1": "reading"})
+class TestTheSameQuestionsAgainstTheReport:
+    """The path that actually runs for a profile declaring JSON. The prose rules
+    above cannot cover it: a report has no stanzas, no indentation and no header
+    lines, and reading it was the change that made a wrongly-named text key
+    silently unmatchable."""
+
+    def test_a_finding_carrying_the_text_matches(self):
+        v = report_verdict([{"sensor": "Inlet", "detail": "has not changed across"}])
+        assert compare_referee(expect("has not changed", names=("Inlet",)), v) == []
+
+    def test_a_subject_in_another_finding_does_not_satisfy_the_text(self):
+        v = report_verdict([{"sensor": "Inlet", "detail": "has not changed"},
+                            {"sensor": "Outlet", "detail": "something else"}])
+        found = compare_referee(expect("has not changed", names=("Outlet",)), v)
+        assert len(found) == 1 and "Outlet" in str(found[0])
+
+    def test_not_names_catches_a_subject_in_the_matching_finding(self):
+        v = report_verdict([{"sensor": "Inlet", "detail": "has not changed"},
+                            {"sensor": "Outlet", "detail": "has not changed"}])
+        found = compare_referee(
+            expect("has not changed", names=("Inlet",), not_names=("Outlet",)), v)
+        assert len(found) == 1 and "Outlet" in str(found[0])
+
+    def test_a_text_key_the_report_does_not_use_matches_nothing(self):
+        """The Phase 2 defect, pinned. The profile named `finding`/`message`; the
+        referee emits `detail`. The comparator found the finding, read no words
+        out of it, and reported the text as absent -- with every scenario still
+        parsing and the suite still green."""
+        wrong = ReportSchema(findings="findings", subject=("sensor",),
+                             text=("finding", "message"))
+        v = Verdict(exit_code=1, stdout="", stderr="",
+                    report={"findings": [{"sensor": "Inlet", "detail": "has not changed"}]},
+                    schema=wrong)
+        found = compare_referee(expect("has not changed"), v)
         assert len(found) == 1
-        assert "Fan1" in str(found[0])
-
-    def test_a_sensor_nobody_observed_is_a_mismatch_not_a_pass(self):
-        found = compare_firmware(FirmwareExpectation(states={"Fan1": "absent"}), {})
-        assert len(found) == 1
-        assert "unknown" in str(found[0])
 
 
-@pytest.mark.parametrize("code,word", [(0, "clean"), (1, "regressions"),
-                                       (2, "incomplete")])
-def test_the_verdict_vocabulary_matches_the_tools(code, word):
-    """The same three words at every layer. A fourth vocabulary here would be one
-    more thing for a pipeline to get wrong."""
-    assert Verdict(exit_code=code, stdout="", stderr="").verdict == word
+class TestTheSubstrateIsItsOwnClaim:
+    def test_the_state_is_compared_to_what_was_observed(self):
+        assert compare_substrate(SubstrateExpectation({"Inlet": "reading"}),
+                                 {"Inlet": "reading"}) == []
+
+    def test_an_entity_nobody_observed_is_a_mismatch_not_a_pass(self):
+        found = compare_substrate(SubstrateExpectation({"Inlet": "absent"}), {})
+        assert len(found) == 1 and "unobserved" in str(found[0])

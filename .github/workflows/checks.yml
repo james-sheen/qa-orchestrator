@@ -1,14 +1,15 @@
-# The suite, and then both scenarios run for real.
+# The suite, and then the example vertical run for real.
 #
-# The unit tests cover the parser, the comparator and the architectural boundary
-# without a machine or a referee. That is most of the program, and none of it
-# proves the thing this repository exists to do -- so the scenarios run too,
-# against the audit tool installed from the index, exactly as a consumer would
-# get it.
+# The unit tests cover the parser, the comparator, the registries and the
+# architectural boundary without a substrate or a referee. That is most of the
+# program, and none of it proves the thing this repository exists to do -- so the
+# example runs too, through the INSTALLED command rather than the tree, which is
+# how a consumer reaches it and the only way a packaging fault shows up.
 #
-# The referee is pinned as a range, the way the audit tool pins its engine. Any
-# 0.1.x release lands here without this repository changing, which is precisely
-# the seam a scenario run is able to notice.
+# The first vertical's scenarios run here too, from inside the vertical they
+# belong to. They are `qa-scenario/1` files read unchanged through the aliases,
+# so this step is also the only place the v1 compatibility claim is exercised
+# end to end rather than at the parser.
 
 name: checks
 
@@ -45,6 +46,11 @@ jobs:
 
   checks:
     runs-on: ubuntu-latest
+    env:
+      # One place. Written into each step instead, it would be five things to
+      # change the next time the first vertical's files move -- which they just
+      # did, out of the core and into the vertical that gives them meaning.
+      BMC_SCENARIOS: src/qa_orchestrator/verticals/bmc_scenarios
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,64 +62,95 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install, with the referee
+      - name: Install, with the first vertical's referee
         run: |
           set -euo pipefail
           python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet -e '.[referee,dev]'
+          python3 -m pip install --quiet -e '.[bmc,dev]'
           python3 -m pip show bmc-sensor-audit | sed -n 's/^Version: /  referee /p'
           python3 -m pip show arbiter-engine   | sed -n 's/^Version: /  engine  /p'
 
       - name: The suite
         run: python3 -m pytest tests/ -q
 
-      - name: Every scenario parses
-        # Cheap, and it catches a scenario nobody runs in CI. A file that cannot
-        # be parsed is a file that was never going to test anything.
-        run: qa-orchestrator check scenarios/
-
-      - name: The acceptance scenario -- the experiment the tool already ships
-        # Expected to pass. If it stops passing, either the engine changed its
-        # verdict on a series whose shape is fixed, or this harness stopped
-        # driving it correctly -- and both are worth a red.
-        run: qa-orchestrator run scenarios/stuck-at.yaml
-
-      - name: The coverage scenario -- removed, then disabled
-        run: qa-orchestrator run scenarios/sensor-removed.yaml
-
-      - name: A scenario that should fail, does
-        # The non-vacuity check. Every scenario above is expected to pass, so a
-        # harness that had broken into always reporting success would sail
-        # through all of them. This one plants an expectation that is wrong on
-        # purpose and asserts the run refuses it, with exit 1 and not exit 2 --
-        # a disagreement, not a harness that fell over.
+      - name: What this build can name
+        # Cheap, and it is the only step that fails when the entry point breaks.
+        # A vertical that stops loading leaves every scenario naming it refused,
+        # which reads like a bad scenario rather than a bad install.
         run: |
           set -euo pipefail
-          sed 's/exit: 0/exit: 1/' scenarios/sensor-removed.yaml > /tmp/wrong.yaml
-          set +e
-          qa-orchestrator run /tmp/wrong.yaml > /tmp/wrong.log 2>&1
-          code=$?
-          set -e
-          echo "  exited ${code}"
-          test "${code}" -eq 1 || {
-            echo "expected 1 (a verdict disagreed); got ${code}"; cat /tmp/wrong.log; exit 1; }
-          grep -q "mismatch" /tmp/wrong.log
+          qa-orchestrator list
+          qa-orchestrator list | grep -q "bmc-sensor-audit" || {
+            echo "the shipped vertical did not register through its entry point"
+            exit 1; }
 
-      - name: The testbed tier still refuses
-        # It has no hardware behind it. The day this stops raising is the day a
-        # scenario can claim it pulled a real fan while touching nothing.
+      - name: The first vertical's scenarios parse
+        # Cheap, and it catches a scenario nobody runs in CI. A file that cannot
+        # be parsed is a file that was never going to test anything. It also
+        # proves the tiers reached the registry: every one of these names `mock`.
+        run: qa-orchestrator check "${BMC_SCENARIOS}"
+
+      # Running those scenarios is NOT a step here. `tests/test_bmc_scenarios_run.py`
+      # does it, parametrised over whatever the directory holds, through the same
+      # console script -- and because this job installs the `bmc` extra, the suite
+      # step above runs them. Two named steps doing what one test does is two
+      # things to update when a scenario is added, and the one that gets forgotten
+      # is the one nobody notices is missing.
+
+      - name: The lab tier still refuses
+        # It has no hardware behind it. The suite pins this too; here it runs
+        # against the INSTALLED package, reached the way a consumer reaches it.
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          from qa_orchestrator.backends import BackendUnavailable, build
+          from qa_orchestrator import substrate
+          from qa_orchestrator.verticals import bmc
+          bmc.register()
           try:
-              build("testbed", {})
-          except BackendUnavailable as refusal:
-              assert "not implemented" in str(refusal)
-              print("  testbed refuses, as it must")
+              substrate.build("testbed", {})
+          except Exception as refusal:
+              assert "not implemented" in str(refusal), refusal
+              print("  the lab tier refuses, as it must")
           else:
-              raise SystemExit("the testbed backend constructed without a lab behind it")
+              raise SystemExit("the lab tier constructed without a lab behind it")
           PY
+
+      - name: The example vertical, through the installed command
+        # A vertical sharing no vocabulary with the first one: a proposal, graded
+        # by a checker that has never seen a BMC. The suite runs this from the
+        # tree; here it goes through the console script, against the package as
+        # installed, which is the half a `src/` layout exists to keep honest.
+        run: |
+          set -euo pipefail
+          PATH="${PWD}/examples/paper/bin:${PATH}"
+          export PATH
+          qa-orchestrator --plugin examples/paper/vertical.py \
+            run examples/paper/withdrawn.yaml
+
+      - name: A scenario that should fail, does
+        # The non-vacuity check. Everything above is expected to pass, so a
+        # harness that had broken into always reporting success would sail
+        # through all of it. This plants an expectation that is wrong on purpose
+        # and asserts the run refuses it, with exit 1 and not exit 2 -- a
+        # disagreement, not a harness that fell over.
+        #
+        # The exit code is not enough on its own: a missing plugin and a bad
+        # argument also exit 1, and the test that pins this in the suite passed
+        # on exactly that before it also required the mismatch to be reported.
+        run: |
+          set -euo pipefail
+          PATH="${PWD}/examples/paper/bin:${PATH}"
+          export PATH
+          sed 's/exit: 0/exit: 1/' examples/paper/withdrawn.yaml > /tmp/wrong.yaml
+          code=0
+          qa-orchestrator --plugin examples/paper/vertical.py \
+            run /tmp/wrong.yaml > /tmp/wrong.log 2>&1 || code=$?
+          echo "  exited ${code}"
+          test "${code}" -eq 1 || {
+            echo "expected 1 (a verdict disagreed); got ${code}"; cat /tmp/wrong.log; exit 1; }
+          grep -q "MISMATCH" /tmp/wrong.log || {
+            echo "exit 1 with no mismatch reported: it failed before comparing"
+            cat /tmp/wrong.log; exit 1; }
 
       - name: Hygiene sweep
         # The same check the hook runs, over the whole tree rather than the

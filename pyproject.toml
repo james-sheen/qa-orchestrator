@@ -5,34 +5,43 @@ build-backend = "hatchling.build"
 [project]
 name = "qa-orchestrator"
 dynamic = ["version"]
-description = "Inject faults, drive walks, and check the audit tool reached the verdict it should have."
+description = "Inject faults into a substrate, drive captures, and check the referee reached the verdict it should have."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "James Sheen" }]
-keywords = ["openbmc", "redfish", "bmc", "qa", "fault-injection", "certification"]
+# No domain here. The first vertical's words -- openbmc, redfish, bmc -- moved
+# out with the tiers they belong to: a package whose keywords name one industry
+# is a package a second vertical has to argue with.
+keywords = ["qa", "fault-injection", "test-harness", "certification", "plugin"]
 
 # PyYAML only. The scenario format is YAML and there is no standard-library
 # reader for it; everything else here is stdlib on purpose, because this has to
-# run on the same bring-up bench the audit tool holds itself to.
+# run on the same bring-up bench the verticals hold themselves to.
 dependencies = ["pyyaml>=6"]
 
 [project.optional-dependencies]
-# The referee. Invoked as a subprocess, never imported for its verdicts -- see
-# referee.py. Declared as an extra rather than a hard dependency so `check`
-# (parse-only) works with nothing else installed.
-# 0.1.1 is the floor and not a preference: `referee.capture` reads
-# `--print-digest` and calls `validate-walk`, and neither exists before it.
-# Raised to 0.2.0 with that package's compatibility break: from 0.2.0 the
-# referee refuses `--insecure` beside `--pin-sha256` or `--cafile` instead of
-# silently running unverified, and it answers `--version`. A harness that drives
-# a referee should not be the thing pinning it below its own security fix.
-referee = ["bmc-sensor-audit[detect]>=0.2.0,<0.3"]
+# The FIRST VERTICAL's referee, not the harness's. Optional because the core
+# does not need it: `check` parses with nothing else installed, and a different
+# vertical brings a different program entirely.
+#
+# 0.2.0 is the floor and not a preference: from it the referee refuses
+# `--insecure` beside `--pin-sha256` or `--cafile` instead of silently running
+# unverified, and it answers `--version`. A harness that drives a referee should
+# not be the thing pinning it below its own security fix.
+bmc = ["bmc-sensor-audit[detect]>=0.2.0,<0.3"]
 dev = ["pytest>=7"]
 
 [project.scripts]
 qa-orchestrator = "qa_orchestrator.cli:main"
+
+# The vertical this package ships reaches the core through the same door any
+# outside vertical uses. Nothing under `qa_orchestrator/` outside `verticals/`
+# names it, and `tests/test_registries.py` checks that structurally rather than
+# against a list of words somebody has to remember to update.
+[project.entry-points."qa_orchestrator.plugins"]
+bmc = "qa_orchestrator.verticals.bmc:register"
 
 # Metadata is immutable per version, and a page with no way back to the source
 # is the shape a released 0.1.0 gets stuck with. Declared before the first
@@ -48,13 +57,16 @@ path = "src/qa_orchestrator/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/qa_orchestrator"]
 
-# The two worked scenarios reach the sdist and not the wheel: a wheel carries
-# only what lives under the package directory. The README says where they are
-# rather than showing a command that needs them, because a quickstart an
-# installing reader cannot run is worse than one that names a placeholder.
+# The examples reach the sdist and not the wheel: a wheel carries only what
+# lives under the package directory. The README says where they are rather than
+# showing a command that needs them, because a quickstart an installing reader
+# cannot run is worse than one that names a placeholder.
 [tool.hatch.build.targets.sdist]
-include = ["src/", "tests/", "scenarios/", "README.md", "LICENSE", "NOTICE",
-           "pyproject.toml"]
+# The first vertical's scenarios now sit inside the package, so they reach the
+# WHEEL as well: a build that can name the `mock` tier can also run the files
+# that exercise it, without a checkout.
+include = ["src/", "tests/", "examples/", "README.md",
+           "DESIGN.md", "LICENSE", "NOTICE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

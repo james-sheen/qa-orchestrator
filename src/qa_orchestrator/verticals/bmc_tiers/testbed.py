@@ -13,7 +13,7 @@ below is the specification of what has to be provided.
 
 from __future__ import annotations
 
-from . import BackendUnavailable
+from ...vocabulary import SubstrateUnavailable
 
 # What a real implementation needs, written down now so the refusal is a
 # specification rather than an apology.
@@ -29,7 +29,7 @@ class TestbedBackend:
     name = "testbed"
 
     def __init__(self, machine: dict) -> None:
-        raise BackendUnavailable(
+        raise SubstrateUnavailable(
             "the testbed backend is not implemented: there is no hardware lab "
             "behind it yet.\n\n"
             "This refuses rather than no-opping. A backend that accepted "

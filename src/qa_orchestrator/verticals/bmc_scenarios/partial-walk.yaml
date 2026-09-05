@@ -41,4 +41,13 @@ phases:
     expect:
       audit:
         exit: 2
-        finding: "walk did not finish"
+        # Asserted against the JSON report, which is what judges a finding from
+        # 0.3 on. `walk did not finish` is the tool's PROSE for this and appears
+        # in no field of the report; the machine-readable form of the same fact
+        # is this sentence in the finding's `detail`, beside `kind:
+        # walk_incomplete` and a top-level `walk_complete: false`.
+        #
+        # Asserting the coded `kind` would be better than either and is not yet
+        # expressible -- `expect.referee.findings` has `text` and no `kind`. See
+        # DESIGN.md, *What still does not generalise*.
+        finding: "absence cannot be distinguished"
