@@ -23,7 +23,16 @@ The last line grades a proposal's requirements with a checker that has never see
 positional arguments where the first vertical's tool takes flags, `issues` where it
 keeps `findings`, and a report of what it did **not** check, which the scenario asserts on.
 
-**Released — 0.3.0**, tagged `v0.3.0`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.3.1**, tagged `v0.3.1`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.3.1 corrects a pointer.** Two source files named a test file that does not
+exist as the guard for the domain-free claim -- the central claim here -- and
+0.3.0 shipped that way, so a reader who followed it found nothing and could not
+tell whether the guard had been renamed, deleted or never written. Both now name
+`tests/test_registries.py` and its class. A check was added that refuses any test
+path this package names and cannot resolve, because the two were found by
+scanning for the shape rather than by reading the one that was reported, and the
+scan found one more than the report did.
 
 **0.3.0 is the domain-free rewrite.** Tiers, verbs, referees and report shapes come
 from registries and the core names none of them; the BMC tool, its tiers and its

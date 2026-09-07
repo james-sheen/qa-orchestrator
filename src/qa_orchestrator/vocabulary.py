@@ -1,9 +1,12 @@
 """Words every module shares, and the errors every module raises.
 
 Nothing in this file -- or anywhere under `qa_orchestrator/` outside
-`verticals/` -- names a domain. `tests/test_domain_free.py` checks that
-structurally: the core may not import a vertical, and may not carry as a string
-constant any name a vertical registers.
+`verticals/` -- names a domain. `tests/test_registries.py` checks that
+structurally, in `TestTheCoreNamesNoVertical`: the core may not import a
+vertical, and may not carry as a string constant any name a vertical registers.
+Named with its class as well as its file, because the name that used to sit here
+belonged to no file at all and a reader following it had no way to tell whether
+the guard had been renamed, deleted, or never written.
 """
 
 from __future__ import annotations
