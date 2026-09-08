@@ -23,7 +23,14 @@ The last line grades a proposal's requirements with a checker that has never see
 positional arguments where the first vertical's tool takes flags, `issues` where it
 keeps `findings`, and a report of what it did **not** check, which the scenario asserts on.
 
-**Released — 0.3.1**, tagged `v0.3.1`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.3.2**, tagged `v0.3.2`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.3.2 follows the referee's wording.** `bmc-sensor-audit` 0.2.5 reworded the
+finding a removed sensor produces -- from the machine to the capture -- and
+`sensor-removed.yaml` still expected the old text, so the scenario shipped in
+0.3.1 fails against every referee from 0.2.5 on. The `bmc` extra now floors that
+dependency at 0.2.5, because everything below it emits the wording the file no
+longer expects.
 
 **0.3.1 corrects a pointer.** Two source files named a test file that does not
 exist as the guard for the domain-free claim -- the central claim here -- and
