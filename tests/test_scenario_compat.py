@@ -38,7 +38,7 @@ class TestTheShippedScenariosReadUnchanged:
         second = got.phases[1]
         assert second.action == ("remove", "Outlet")
         assert second.expect_referee.exit_code == 1
-        assert second.expect_referee.findings.text == "not reported by the machine at all"
+        assert second.expect_referee.findings.text == "not present in the capture at all"
         assert second.expect_referee.findings.names == ("Outlet",)
         assert second.expect_referee.findings.not_names == ("Inlet",)
         assert second.expect_substrate.states == {"Outlet": "absent", "Inlet": "reading"}

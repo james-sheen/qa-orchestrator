@@ -34,7 +34,7 @@ phases:
     expect:
       audit:
         exit: 1
-        finding: "not reported by the machine at all"
+        finding: "not present in the capture at all"
         names: [Outlet]
         not_names: [Inlet]
       firmware: {Outlet: absent, Inlet: reading}

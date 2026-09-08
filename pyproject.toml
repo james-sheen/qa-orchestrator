@@ -30,7 +30,7 @@ dependencies = ["pyyaml>=6"]
 # `--insecure` beside `--pin-sha256` or `--cafile` instead of silently running
 # unverified, and it answers `--version`. A harness that drives a referee should
 # not be the thing pinning it below its own security fix.
-bmc = ["bmc-sensor-audit[detect]>=0.2.0,<0.3"]
+bmc = ["bmc-sensor-audit[detect]>=0.2.5,<0.3"]
 dev = ["pytest>=7"]
 
 [project.scripts]
