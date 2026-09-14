@@ -163,10 +163,15 @@ def _parse_findings(raw: Any, where: str) -> FindingsExpectation:
     return found
 
 
-def _parse_declines(raw: Any, where: str, tool: referee.Tool) -> DeclinesExpectation:
-    _require(tool.report.declines is not None,
+def _parse_declines(raw: Any, where: str, tool: referee.Tool,
+                    mode: str) -> DeclinesExpectation:
+    # The schema FOR THIS MODE. A profile may answer a different one per mode,
+    # so a check against the tool's first answer would refuse a scenario that is
+    # correct in the mode it names.
+    _require(tool.report_for(mode).declines is not None,
              f"{where}: expects declines, but {tool.name}'s profile declares no "
-             f"declines list in its report, so this could never hold")
+             f"declines list in its report for mode {mode!r}, so this could "
+             f"never hold")
     _require(isinstance(raw, dict), f"{where}: declines must be a mapping")
     unknown = set(raw) - {"reason", "names", "not_names"}
     _require(not unknown, f"{where}: declines has unknown key(s) {sorted(unknown)}")
@@ -178,10 +183,12 @@ def _parse_declines(raw: Any, where: str, tool: referee.Tool) -> DeclinesExpecta
     return DeclinesExpectation(reason=reason, names=names, not_names=not_names)
 
 
-def _parse_checked(raw: Any, where: str, tool: referee.Tool) -> CheckedExpectation:
-    _require(tool.report.checked is not None,
+def _parse_checked(raw: Any, where: str, tool: referee.Tool,
+                   mode: str) -> CheckedExpectation:
+    _require(tool.report_for(mode).checked is not None,
              f"{where}: expects a checked count, but {tool.name}'s profile declares "
-             f"no denominator in its report, so this could never hold")
+             f"no denominator in its report for mode {mode!r}, so this could "
+             f"never hold")
     if isinstance(raw, int) and not isinstance(raw, bool):
         return CheckedExpectation(exact=raw)
     _require(isinstance(raw, dict), f"{where}: checked must be an integer or "
@@ -219,8 +226,8 @@ def _parse_referee_expectation(raw: Any, where: str, tool: referee.Tool,
     expectation = RefereeExpectation(
         exit_code=exit_code,
         findings=_parse_findings(raw["findings"], where) if "findings" in raw else None,
-        declines=_parse_declines(raw["declines"], where, tool) if "declines" in raw else None,
-        checked=_parse_checked(raw["checked"], where, tool) if "checked" in raw else None)
+        declines=_parse_declines(raw["declines"], where, tool, mode) if "declines" in raw else None,
+        checked=_parse_checked(raw["checked"], where, tool, mode) if "checked" in raw else None)
     _require(not expectation.is_empty(),
              f"{where}: expect.{spelling} sets nothing, so it would assert nothing "
              f"while looking like an assertion")

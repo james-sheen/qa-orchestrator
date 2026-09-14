@@ -142,8 +142,17 @@ class Tool:
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise RegistrationError(f"Tool {self.name!r}: {name} must be callable or None")
-        if not isinstance(self.report, ReportSchema):
-            raise RegistrationError(f"Tool {self.name!r}: report must be a ReportSchema")
+        if callable(self.report):
+            for mode in self.modes:
+                answered = self.report(mode)
+                if not isinstance(answered, ReportSchema):
+                    raise RegistrationError(
+                        f"Tool {self.name!r}: report({mode!r}) answered "
+                        f"{type(answered).__name__}, not a ReportSchema")
+        elif not isinstance(self.report, ReportSchema):
+            raise RegistrationError(
+                f"Tool {self.name!r}: report must be a ReportSchema, or a "
+                f"callable report(mode) answering one")
         if self.digest_pattern is not None:
             try:
                 re.compile(self.digest_pattern)
@@ -156,6 +165,23 @@ class Tool:
 
     def has_json(self, mode: str) -> bool:
         return bool(self.json_argv and self.json_argv(mode))
+
+    def report_for(self, mode: str) -> ReportSchema:
+        """The schema for THIS mode.
+
+        One `ReportSchema` covered every mode a tool declared, and `findings`,
+        `declines` and `checked` are single keys -- so a tool whose two judging
+        modes name their list differently could not be described at all. The
+        options were to rename a key in the tool's own published document, or to
+        leave one mode ungraded.
+
+        A callable rather than a mapping, because `judge_argv` and `json_argv`
+        already vary by mode exactly this way: one mechanism, already in this
+        profile's vocabulary, rather than a second spelling for the same idea.
+        A plain `ReportSchema` still answers for every mode, which is what every
+        registered profile has.
+        """
+        return self.report(mode) if callable(self.report) else self.report
 
 
 # -- registry ------------------------------------------------------------------
@@ -261,6 +287,10 @@ class Verdict:
     #: Copied from the profile that produced this verdict, so reading the
     #: report needs no second lookup and no assumption about whose report it is.
     schema: ReportSchema = field(default_factory=ReportSchema)
+    #: Why there is no machine-readable report, when there is none. None when
+    #: one was read. Every message about a missing report names this rather than
+    #: asserting a cause.
+    unread: str | None = None
 
     @property
     def verdict(self) -> str:
@@ -273,8 +303,14 @@ class Verdict:
     def findings(self) -> list[dict]:
         if not self.report:
             return []
-        found = self.report.get(self.schema.findings) or []
-        return [f for f in found if isinstance(f, dict)]
+        # `_dig`, which is the call `declines` and `checked` already make. This
+        # was a plain `.get`, so a dotted path resolved for two of the three
+        # fields and not for the one whose docstring reads identically to one of
+        # them -- and a referee keeping its findings nested reported ZERO
+        # findings with the scenario green. Nothing could go red on it. A plain
+        # key still resolves through `_dig`, so no existing profile moves.
+        found = _dig(self.report, self.schema.findings) or []
+        return [f for f in found if isinstance(f, dict)] if isinstance(found, list) else []
 
     def declines(self) -> list[dict]:
         if not self.report or self.schema.declines is None:
@@ -409,15 +445,31 @@ def judge(mode: str, configs: Sequence[str], captures: Sequence[Path], *,
     base = [executable(tool), *tool.judge_argv(mode, configs, captures)]
     human = _run(base, tool.judge_timeout)
 
+    # WHY there is no report, not just that there is none. `report is None` has
+    # THREE causes and the messages downstream attributed it to one: a mode with
+    # no `json_argv`, output that would not parse, and output that parsed to
+    # something other than an object. The middle one is easy for a tool to reach
+    # by accident -- one line of prose after a valid document -- and the reader
+    # was sent to look for a missing flag that was there all along.
     report = None
+    unread: str | None = None
     machine_argv = tool.json_argv(mode) if tool.json_argv else None
-    if machine_argv:
+    if not machine_argv:
+        unread = f"no json_argv for mode {mode!r}"
+    else:
         machine = _run([*base, *machine_argv], tool.judge_timeout)
         try:
             loaded = json.loads(machine.stdout)
-            report = loaded if isinstance(loaded, dict) else None
-        except json.JSONDecodeError:
-            report = None
+        except json.JSONDecodeError as refused:
+            unread = (f"the output would not parse ({refused.msg} at line "
+                      f"{refused.lineno}): {machine.stdout.strip()[:80]!r}")
+        else:
+            if isinstance(loaded, dict):
+                report = loaded
+            else:
+                unread = (f"the output parsed to a {type(loaded).__name__}, "
+                          f"not an object")
 
     return Verdict(exit_code=human.returncode, stdout=human.stdout,
-                   stderr=human.stderr, report=report, schema=tool.report)
+                   stderr=human.stderr, report=report,
+                   schema=tool.report_for(mode), unread=unread)

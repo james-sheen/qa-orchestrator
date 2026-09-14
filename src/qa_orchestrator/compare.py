@@ -95,7 +95,13 @@ def _relevant_lines(stdout: str, text: str | None) -> list[str]:
 
 def _findings_from_prose(expected: FindingsExpectation, verdict: Verdict) -> list[Mismatch]:
     found: list[Mismatch] = []
-    tag = "(stdout; this referee prints no JSON for this mode)"
+    # NAMES THE CAUSE THE RUN ACTUALLY HAD. This asserted one of three, and the
+    # run that produced this issue had a different one: `json_argv` was defined
+    # and answered, the referee printed a valid document followed by one line of
+    # prose, and the decode failed. The message sent the reader to the wrong
+    # file. The fallback itself is right and is unchanged -- prose still catches
+    # a false claim, which was measured before this was filed.
+    tag = f"(stdout; {verdict.unread or 'no JSON report was read'})"
     if expected.text is not None and expected.text not in verdict.stdout:
         found.append(Mismatch(f"finding {tag}", f"the output to contain {expected.text!r}",
                               "it did not"))
@@ -118,7 +124,7 @@ def _findings_from_prose(expected: FindingsExpectation, verdict: Verdict) -> lis
 def _declines(expected: DeclinesExpectation, verdict: Verdict) -> list[Mismatch]:
     if verdict.report is None:
         return [Mismatch("declines", "a JSON report to read them from",
-                         "the referee printed none this run")]
+                         verdict.unread or "no JSON report was read")]
     schema = verdict.schema
     declines = verdict.declines()
     if expected.reason is not None:
@@ -147,7 +153,7 @@ def _checked(expected: CheckedExpectation, verdict: Verdict) -> list[Mismatch]:
     got = verdict.checked()
     if got is None:
         return [Mismatch("checked", "the report to carry a denominator",
-                         "it did not (or the referee printed no JSON)")]
+                         verdict.unread or "it did not")]
     found: list[Mismatch] = []
     if expected.exact is not None and got != expected.exact:
         found.append(Mismatch("checked", f"exactly {expected.exact}", str(got)))
