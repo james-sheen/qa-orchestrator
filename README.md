@@ -23,7 +23,16 @@ The last line grades a proposal's requirements with a checker that has never see
 positional arguments where the first vertical's tool takes flags, `issues` where it
 keeps `findings`, and a report of what it did **not** check, which the scenario asserts on.
 
-**Released — 0.3.2**, tagged `v0.3.2`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.3.3**, tagged `v0.3.3`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.3.3 reads a referee's report the way its profile says it is written.**
+`findings` resolves a dotted path, which `declines` and `checked` already did --
+a referee keeping its findings nested reported zero of them and the scenario was
+green. A profile may now answer a `ReportSchema` per mode, the way `judge_argv`
+and `json_argv` already vary by mode, so a tool naming its list differently in
+two modes can be described without renaming a published key. And a run with no
+machine-readable report says which of its three causes it had, rather than
+asserting one.
 
 **0.3.2 follows the referee's wording.** `bmc-sensor-audit` 0.2.5 reworded the
 finding a removed sensor produces -- from the machine to the capture -- and
