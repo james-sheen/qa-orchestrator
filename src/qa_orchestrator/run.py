@@ -18,7 +18,7 @@ from pathlib import Path
 from . import actions, referee
 from .compare import Mismatch, PhaseResult, compare_referee, compare_substrate
 from .scenario import Scenario
-from .substrate import build, observe
+from .substrate import access_of, build, observe
 from .vocabulary import HarnessError
 
 EXIT_CLEAN, EXIT_MISMATCH, EXIT_INCOMPLETE = 0, 1, 2
@@ -174,7 +174,8 @@ def run(scenario: Scenario, *, workdir: Path | None = None, on_event=None) -> Ru
                 # reads like an unreachable substrate.
                 target = substrate.start()
                 number = len(taken_paths) + 1
-                got = referee.capture(target, workdir / f"capture_{number:03d}.json", tool=tool)
+                got = referee.capture(target, workdir / f"capture_{number:03d}.json",
+                                      tool=tool, access=access_of(substrate))
                 taken_paths.append(got.path)
                 captures.append(got)
                 if not got.complete:

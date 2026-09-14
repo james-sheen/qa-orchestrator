@@ -13,6 +13,7 @@ drifting apart.
 from __future__ import annotations
 
 from ...vocabulary import SubstrateUnavailable
+from .access import refuse_access
 
 try:
     from bmc_sensor_audit.testing.mock_redfish import MockBMC, MockSensor, serve
@@ -30,6 +31,7 @@ class MockBackend:
         # every scenario written before it says, and those files are on disk and
         # published. Reading one and refusing the other would break them for a
         # rename.
+        refuse_access(machine, "mock")
         entities = machine.get("entities") or machine.get("sensors") or []
         if not entities:
             raise SubstrateUnavailable(

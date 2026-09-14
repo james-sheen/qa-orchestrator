@@ -95,6 +95,17 @@ class Tool:
     capture_argv: Callable[[str, Path], Sequence[str]]
     #: `judge_argv(mode, configs, captures)`: judge every capture so far, oldest first.
     judge_argv: Callable[[str, Sequence[str], Sequence[Path]], Sequence[str]]
+    #: `access_argv(access)`: the arguments that let this tool REACH a substrate
+    #: the tier described, or None if it needs none. The harness hands over
+    #: whatever `Substrate.access` returned without reading it, so what counts as
+    #: a credential, a certificate choice or a timeout is the profile's business
+    #: and never this module's.
+    #:
+    #: Separate from `capture_argv` deliberately. That builder answers *what do I
+    #: record and where does it go*, which is the same question on a mock and on
+    #: a machine in a rack; this one answers *how do I get in*, which is a fact
+    #: about the substrate and reaches the profile from the tier that started it.
+    access_argv: Callable[[Any], Sequence[str]] | None = None
     #: `validate_argv(path)`: say whether a capture file is well formed, or None
     #: if the tool ships no validator. Then a capture is judged by its existence
     #: alone and the evidence block says `unvalidated` for every one of them.
@@ -127,7 +138,7 @@ class Tool:
         for name in ("capture_argv", "judge_argv"):
             if not callable(getattr(self, name)):
                 raise RegistrationError(f"Tool {self.name!r}: {name} must be callable")
-        for name in ("validate_argv", "json_argv"):
+        for name in ("validate_argv", "json_argv", "access_argv"):
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise RegistrationError(f"Tool {self.name!r}: {name} must be callable or None")
@@ -323,7 +334,7 @@ def _run(argv: Sequence[str], timeout: float) -> subprocess.CompletedProcess:
     return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout)
 
 
-def capture(target: str, out: Path, *, tool: Tool) -> Capture:
+def capture(target: str, out: Path, *, tool: Tool, access: Any = None) -> Capture:
     """Record one observation. The tool's own capture step, no substitute.
 
     The FILE is judged, not the exit code: `capture` exits 2 both when it could
@@ -331,8 +342,16 @@ def capture(target: str, out: Path, *, tool: Tool) -> Capture:
     an error -- and the second is a capture the tool deliberately writes, because
     knowing which region failed is the point. A capture that produced no readable
     file is still a failure and still raises.
+
+    `access` is the tier's description of how to get in, and it is appended to
+    the profile's own arguments rather than merged into them: the two answer
+    different questions, and a profile that declares no `access_argv` gets
+    exactly the command it got before this existed.
     """
-    result = _run([executable(tool), *tool.capture_argv(target, out)], tool.capture_timeout)
+    argv = list(tool.capture_argv(target, out))
+    if tool.access_argv is not None and access is not None:
+        argv += list(tool.access_argv(access))
+    result = _run([executable(tool), *argv], tool.capture_timeout)
 
     if not out.exists():
         raise CaptureFailed(

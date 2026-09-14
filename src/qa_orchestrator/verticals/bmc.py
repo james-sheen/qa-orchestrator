@@ -33,6 +33,34 @@ def _flagged_judge(mode: str, configs: Sequence[str], captures: Sequence[Path]) 
     return tuple(argv)
 
 
+def _access_argv(access: dict) -> tuple[str, ...]:
+    """`machine:`'s access keys as this tool's flags.
+
+    The mapping lives here rather than in the tier because which flag means *do
+    not verify the certificate* is a fact about one program, and a second
+    vertical's referee spells all of this differently or not at all.
+
+    `--password-env` and never `--password`: the value stays in the environment
+    and out of argv, which is the tool's own recommendation and the reason the
+    reader refuses a literal password before this is ever called.
+    """
+    argv: list[str] = []
+    if "username" in access:
+        argv += ["--username", str(access["username"])]
+    if "password_env" in access:
+        argv += ["--password-env", str(access["password_env"])]
+    tls = access.get("tls")
+    if tls == "insecure":
+        argv += ["--insecure"]
+    elif isinstance(tls, dict) and "cafile" in tls:
+        argv += ["--cafile", str(tls["cafile"])]
+    elif isinstance(tls, dict) and "pin_sha256" in tls:
+        argv += ["--pin-sha256", str(tls["pin_sha256"])]
+    if "timeout" in access:
+        argv += ["--timeout", str(access["timeout"])]
+    return tuple(argv)
+
+
 BMC_SENSOR_AUDIT = referee.Tool(
     name="bmc-sensor-audit",
     executable="bmc-sensor-audit",
@@ -41,6 +69,12 @@ BMC_SENSOR_AUDIT = referee.Tool(
     capture_argv=lambda target, out: ("capture", "--target", target, "--out", str(out),
                                       "--print-digest"),
     validate_argv=lambda path: ("validate-walk", str(path)),
+    # How to get IN, which `capture_argv` above has nowhere to put: it answers
+    # what to record and where to write it, the same question on a mock and on a
+    # machine in a rack. Every real BMC ships a self-signed certificate and wants
+    # a credential, and a scenario could express neither -- so the qemu tier
+    # could inject into real firmware and this referee could never read it.
+    access_argv=_access_argv,
     judge_argv=_flagged_judge,
     json_argv=lambda mode: ("--json",) if mode == "coverage" else None,
     # DERIVED from a report this tool wrote, not from what a report might

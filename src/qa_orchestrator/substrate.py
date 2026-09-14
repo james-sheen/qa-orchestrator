@@ -43,6 +43,22 @@ class Substrate(Protocol):
         simply returns the same handle again.
         """
 
+    def access(self) -> Any:
+        """How a referee reaches this substrate, BEYOND the handle `start` returns.
+
+        Optional: a tier that needs nothing more does not define it, and the
+        harness supplies an empty description. Whatever is returned is passed to
+        the referee profile untouched -- the harness does not read it, exactly as
+        it does not read the handle.
+
+        It exists because a handle alone cannot reach a real machine. A scenario
+        pointed at one could name the target and nothing else: no credential, no
+        certificate choice, no timeout, because the format had nowhere to put
+        them and the profile's argv builder took two arguments. A tier could
+        inject into real firmware and the referee could never read it, which was
+        found by running one.
+        """
+
     def stop(self) -> None:
         """Take it down. Safe to call twice."""
 
@@ -73,6 +89,20 @@ class Substrate(Protocol):
 
 
 Factory = Callable[[dict], Substrate]
+
+
+def access_of(substrate: Any) -> Any:
+    """A tier's access description, or nothing.
+
+    `getattr` rather than a required member: every tier written before this
+    existed is still a tier, and a protocol that breaks its implementors to add
+    an optional capability is not optional. A tier whose `access` raises is NOT
+    caught here -- a tier refusing to describe itself is refusing, and the run
+    must stop rather than fall back to the empty description that means *no
+    credential needed*.
+    """
+    describe = getattr(substrate, "access", None)
+    return describe() if callable(describe) else None
 
 #: Tiers a vertical registered at runtime.
 _REGISTERED: Dict[str, Factory] = {}

@@ -32,6 +32,7 @@ import json
 import socket
 
 from ...vocabulary import SubstrateUnavailable
+from .access import access_from
 
 
 class QmpError(RuntimeError):
@@ -133,6 +134,7 @@ class QemuBackend:
                 "Owning the boot recipe -- image build id, machine type, FRU "
                 "provisioning -- is not implemented, and claiming it would be "
                 "worse than not having it.")
+        self._access = access_from(machine)
         self._client: QmpClient | None = None
         #: (path, property, requested, stored) for every write this session, so
         #: the question *is this property following?* can be asked of more than
@@ -143,6 +145,15 @@ class QemuBackend:
         self._client = QmpClient(self.qmp_address)
         self._client.connect()
         return self.target
+
+    def access(self) -> dict:
+        """What the referee needs to read this machine, from `machine:`.
+
+        A real BMC ships a self-signed certificate and wants a credential, and
+        until this existed a scenario had nowhere to say either -- so this tier
+        could drive real firmware and the referee could never read it.
+        """
+        return self._access
 
     def stop(self) -> None:
         if self._client is not None:
