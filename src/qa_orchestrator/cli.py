@@ -92,7 +92,18 @@ def _run(path: str, workdir: str | None) -> int:
         print(f"\n{len(result.mismatches)} mismatch(es):", file=sys.stderr)
         for mismatch in result.mismatches:
             print(f"  - {mismatch}", file=sys.stderr)
-        return EXIT_MISMATCH
+        # Asked rather than restated. This returned EXIT_MISMATCH outright while
+        # `RunResult.exit_code` was deciding the same thing a second way, so the
+        # two could disagree and only one of them reached the caller -- which is
+        # exactly what happened when the could-not-complete rule landed there.
+        code = result.exit_code()
+        if code == EXIT_INCOMPLETE:
+            phases = ", ".join(str(p.phase.index) for p in result.unjudged)
+            print(f"\nthe referee could not complete on phase(s) {phases}, so "
+                  f"the mismatches above are not disagreements about the "
+                  f"substrate -- it reported that it had nothing to judge. This "
+                  f"run is incomplete.", file=sys.stderr)
+        return code
 
     print("every expectation held")
     return EXIT_CLEAN

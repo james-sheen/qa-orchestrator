@@ -66,15 +66,40 @@ class RunResult:
     def assertions(self) -> int:
         return sum(1 for p in self.phases if p.asserted_anything)
 
+    @property
+    def unjudged(self) -> tuple[PhaseResult, ...]:
+        """Phases where the referee said it could not complete and the
+        expectations then failed.
+
+        Not every could-not-complete verdict belongs here. A phase that EXPECTED
+        `2` and got it has no mismatch at all, which is how a scenario asserting
+        the referee's honesty about a partial capture stays clean.
+        """
+        return tuple(phase for phase in self.phases
+                     if phase.mismatches and phase.verdict is not None
+                     and phase.verdict.could_not_complete)
+
     def exit_code(self) -> int:
         """`2` when the run could not be completed, `1` when a verdict disagreed.
 
         Could-not-complete outranks disagreement, because a run that stopped
         early has not evaluated the phases it never reached.
+
+        **A referee that reported could-not-complete is the same fact.** Its `2`
+        means it had nothing to judge; calling the resulting failure a
+        disagreement claims the substrate was read and answered wrongly, which
+        is a claim about the machine nobody made. Found by running a scenario
+        against a real BMC this harness cannot authenticate to: twenty-eight
+        captures reached zero of everything, the referee answered `2` every
+        time, and the run reported three disagreements and exited `1`.
+        `Verdict.could_not_complete` was written for this question and nothing
+        had ever asked it.
         """
         if self.error is not None:
             return EXIT_INCOMPLETE
-        return EXIT_MISMATCH if self.mismatches else EXIT_CLEAN
+        if not self.mismatches:
+            return EXIT_CLEAN
+        return EXIT_INCOMPLETE if self.unjudged else EXIT_MISMATCH
 
 
 def run(scenario: Scenario, *, workdir: Path | None = None, on_event=None) -> RunResult:
