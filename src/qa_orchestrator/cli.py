@@ -77,6 +77,13 @@ def _run(path: str, workdir: str | None) -> int:
             print(f"  {line}")
         print()
 
+    repeated = result.one_handle_for_every_capture
+    if repeated:
+        print(f"every capture in this run has one handle, {repeated}: nothing "
+              f"observed differed between the first and the last, so no phase's "
+              f"action is evidenced by what was captured", file=sys.stderr)
+        print()
+
     if result.error:
         print(f"could not complete: {result.error}", file=sys.stderr)
         return EXIT_INCOMPLETE

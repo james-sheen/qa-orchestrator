@@ -67,6 +67,34 @@ class RunResult:
         return sum(1 for p in self.phases if p.asserted_anything)
 
     @property
+    def one_handle_for_every_capture(self) -> str | None:
+        """The handle every capture shared, when a whole series produced one.
+
+        A run that observed a substrate it was perturbing, and got back the same
+        bytes every time, has evidence of nothing that happened between the
+        first capture and the last. It came up on a real BMC: twenty-eight
+        captures, one handle, `sha256:850793ab...` twenty-eight times, and the
+        evidence table listed all of them as validated without remarking on it.
+        The handle was already being computed for every capture; nothing
+        compared any two of them.
+
+        **Reported, not graded, and the reason is a real case rather than
+        caution.** A referee whose capture is deterministic -- the example
+        vertical's is, it hashes the snapshot and nothing else -- returns the
+        same handle for two captures of a substrate that did not change, which
+        is correct and common. Failing on that would fire at a scenario for
+        being honest. The grade for the case that found this is already right:
+        the referee said it could not complete, and `exit_code` reads that.
+
+        One capture is not a series, and a profile that declares no handle has
+        nothing to compare, so both answer None.
+        """
+        handles = [capture.digest for capture in self.captures]
+        if len(handles) > 1 and all(handles) and len(set(handles)) == 1:
+            return handles[0]
+        return None
+
+    @property
     def unjudged(self) -> tuple[PhaseResult, ...]:
         """Phases where the referee said it could not complete and the
         expectations then failed.

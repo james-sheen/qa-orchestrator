@@ -250,6 +250,46 @@ class TestTheEvidenceOutlivesTheWorkdir:
         assert RunResult(scenario=None, phases=[], captures_taken=0).evidence() == []
 
 
+def _taken(*digests):
+    from qa_orchestrator.run import RunResult
+
+    return RunResult(
+        scenario=None, phases=[], captures_taken=len(digests),
+        captures=tuple(referee.Capture(Path(f"/gone/c{n}.json"), complete=True,
+                                       validated=True, digest=digest)
+                       for n, digest in enumerate(digests, start=1)))
+
+
+class TestASeriesThatNeverDiffered:
+    """Twenty-eight captures with one handle between them, and nothing said so.
+
+    The run that found this drove a sensor through twelve values and then froze
+    it, took twenty-eight captures of the result, and every one hashed to
+    `sha256:850793ab...` because every one was the same empty file. The evidence
+    table listed all twenty-eight as validated. The handle was already being
+    computed for each; nothing had ever compared two of them.
+    """
+
+    OTHER = "sha256:" + "b" * 64
+
+    def test_one_handle_across_a_series_is_reported(self):
+        assert _taken(DIGEST, DIGEST, DIGEST).one_handle_for_every_capture == DIGEST
+
+    def test_a_series_that_moved_is_not(self):
+        assert _taken(DIGEST, self.OTHER, DIGEST).one_handle_for_every_capture is None
+
+    def test_one_capture_is_not_a_series(self):
+        """Nothing to compare it with, so there is nothing to say about it."""
+        assert _taken(DIGEST).one_handle_for_every_capture is None
+
+    def test_a_profile_with_no_handles_has_nothing_to_compare(self):
+        """All-None is not all-the-same: the profile declares no shape, and
+        reporting sameness there would be reporting the absence of evidence as
+        evidence."""
+        assert _taken(None, None).one_handle_for_every_capture is None
+        assert _taken(DIGEST, None).one_handle_for_every_capture is None
+
+
 class TestTheShippedScenarioExercisesTheAction:
     """A scenario nobody runs is a claim. This one exists because the action it
     uses was documented, unusable, and covered by nothing."""

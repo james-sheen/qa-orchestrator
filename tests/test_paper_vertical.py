@@ -202,3 +202,59 @@ class TestTheCommandLineReachesARegistration:
         out = capsys.readouterr().out
         assert "substrates: memory, paper" in out
         assert "contradict" in out and "proposal-review" in out
+
+
+class TestASeriesThatNeverDiffered:
+    """Two captures of a substrate nobody touched, through a referee whose
+    handle is a hash of the snapshot and nothing else.
+
+    This is the case that decides the rule's shape. On the BMC that found it,
+    one handle across a whole series meant no evidence was gathered; here it
+    means the substrate did not change and the referee is being honest about
+    it. The same observation, two meanings -- which is why the run says it and
+    does not grade it.
+    """
+
+    SAME = """format: qa-scenario/2
+name: two captures of a proposal nobody edited
+substrate: paper
+referee: proposal-review
+mode: review
+config: rules.json
+
+setup:
+  entities:
+    - {name: R-3.2, value: "the pump shall stop within 2 s of a level alarm"}
+    - {name: R-7.1, value: "the pump shall restart within 5 s"}
+    - {name: R-9.0, value: "manual restart shall be possible at any time"}
+
+phases:
+  - note: nothing is injected, so both captures are of one state
+    captures: 2
+    expect:
+      referee: {exit: 0, checked: 3}
+"""
+
+    def test_the_run_notices_and_stays_clean(self, paper, tmp_path):
+        result = run(parse(self.SAME, source=WITHDRAWN), workdir=tmp_path / "work")
+        assert result.captures_taken == 2
+        assert result.one_handle_for_every_capture is not None
+        assert result.exit_code() == 0, "an honest referee must not fail for this"
+
+    def test_the_caller_is_told(self, paper_on_path, tmp_path, capsys):
+        scenario = tmp_path / "same.yaml"
+        scenario.write_text(self.SAME)
+        (tmp_path / "rules.json").write_text((EXAMPLE / "rules.json").read_text())
+        import sys
+        loaded = None
+        try:
+            code = cli.main(["--no-entry-points", "--plugin",
+                             str(EXAMPLE / "vertical.py"), "run", str(scenario)])
+        finally:
+            loaded = sys.modules.pop("qa_orchestrator_plugin_vertical", None)
+            if loaded is not None:
+                loaded.unregister()
+        captured = capsys.readouterr()
+        assert code == 0, captured.err
+        assert "every capture in this run has one handle" in captured.err
+        assert "no phase's action is evidenced" in captured.err
