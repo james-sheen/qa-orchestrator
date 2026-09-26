@@ -23,7 +23,14 @@ The last line grades a proposal's requirements with a checker that has never see
 positional arguments where the first vertical's tool takes flags, `issues` where it
 keeps `findings`, and a report of what it did **not** check, which the scenario asserts on.
 
-**Released — 0.3.3**, tagged `v0.3.3`, Apache-2.0, on PyPI as `qa-orchestrator`.
+**Released — 0.3.4**, tagged `v0.3.4`, Apache-2.0, on PyPI as `qa-orchestrator`.
+
+**0.3.4 admits the referee's 0.3 line in the `bmc` extra.** It held
+`bmc-sensor-audit` below 0.3 for eighteen days after 0.3.0, so installing the
+extra resolved a 0.2 referee on a 0.1 engine while the rest of the family had
+moved on. Nothing here needed the ceiling -- the vertical imports only the
+referee's mock BMC -- and the suite passes on referees 0.2.7, 0.3.0 and 0.3.5. And
+the sdist ships the tools its own tests read, so its suite runs from the artifact.
 
 **0.3.3 reads a referee's report the way its profile says it is written.**
 `findings` resolves a dotted path, which `declines` and `checked` already did --
