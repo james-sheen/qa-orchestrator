@@ -26,11 +26,20 @@ dependencies = ["pyyaml>=6"]
 # does not need it: `check` parses with nothing else installed, and a different
 # vertical brings a different program entirely.
 #
-# 0.2.0 is the floor and not a preference: from it the referee refuses
-# `--insecure` beside `--pin-sha256` or `--cafile` instead of silently running
-# unverified, and it answers `--version`. A harness that drives a referee should
-# not be the thing pinning it below its own security fix.
-bmc = ["bmc-sensor-audit[detect]>=0.2.5,<0.3"]
+# 0.2.5 is the floor and not a preference: the scenarios this package ships
+# expect the wording the referee adopted at 0.2.5 for a removed sensor, and
+# every release below it emits the old text (0.3.2's note in the README). This
+# comment said 0.2.0 for that whole time, giving the reason for the floor
+# before -- the referee refusing `--insecure` beside `--pin-sha256` or
+# `--cafile`, and answering `--version` -- which still holds and is no longer
+# the binding one.
+#
+# THE CEILING ROSE TO <0.4 ON 2026-09-26, eighteen days into the referee's 0.3
+# line. Held at <0.3, `pip install qa-orchestrator[bmc]` resolved a 0.2 referee
+# on a 0.1 engine while the rest of the family had moved on -- and nothing here
+# needed it: the vertical imports only the referee's mock BMC, which 0.3 still
+# ships. Measured, the suite is 299 passed on referees 0.2.7, 0.3.0 and 0.3.5.
+bmc = ["bmc-sensor-audit[detect]>=0.2.5,<0.4"]
 dev = ["pytest>=7"]
 
 [project.scripts]
