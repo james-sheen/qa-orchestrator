@@ -74,8 +74,13 @@ packages = ["src/qa_orchestrator"]
 # The first vertical's scenarios now sit inside the package, so they reach the
 # WHEEL as well: a build that can name the `mock` tier can also run the files
 # that exercise it, without a checkout.
-include = ["src/", "tests/", "examples/", "README.md",
-           "DESIGN.md", "LICENSE", "NOTICE", "pyproject.toml"]
+#
+# AND THE SDIST SHIPS WHAT ITS OWN TESTS READ. `tests/` is in it, and two of those
+# tests read the hygiene and commit-message tools under `tools/`, which were not:
+# measured on the 0.3.3 sdist, two collection errors, so its suite could not run
+# from the artifact it ships in. The hooks and the workflow come with the tools.
+include = ["src/", "tests/", "examples/", "tools/", ".github/", ".githooks/",
+           "README.md", "DESIGN.md", "LICENSE", "NOTICE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
